@@ -46,11 +46,19 @@ var droppedExact = []string{
 	"io.systemd.Basic.Hostname",
 	"io.systemd.Basic.MachineID",
 	"io.systemd.Basic.BootID",
+	// SMBIOS values unique to one physical machine; the make/model/firmware fields stay.
+	"io.systemd.Basic.SMBIOS.SystemSerialNumber",
+	"io.systemd.Basic.SMBIOS.SystemUUID",
+	"io.systemd.Basic.SMBIOS.BaseBoardSerial",
+	"io.systemd.Basic.SMBIOS.ChassisSerialNumber",
+	"io.systemd.Basic.SMBIOS.BaseBoardAssetTag",
+	"io.systemd.Basic.SMBIOS.ChassisAssetTagNumber",
 }
 
 var droppedPrefix = []string{
 	"io.systemd.Basic.MachineInfo.",
-	"io.systemd.Files.", // privileged reads of arbitrary files; opt-in per family
+	"io.systemd.Files.",  // privileged reads of arbitrary files; opt-in per family
+	"io.systemd.Report.", // report signers publish per-machine keys, which link every report to one machine
 }
 
 var (

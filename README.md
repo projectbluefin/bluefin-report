@@ -28,6 +28,7 @@ bluefin-report --print-summary   # collect a snapshot and print the overview, no
 ## Privacy
 
 - Removed before you ever see it: hostname, machine ID, boot ID, machine-info,
+  hardware serial numbers, system UUID and asset tags, report-signing keys,
   your username, MAC/IPv4/IPv6 addresses, email addresses, and home paths
   (`/home/<user>` → `~`). Pattern redaction is best-effort; the Review page
   lists every removal with a count.
