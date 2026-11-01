@@ -76,7 +76,9 @@ func TestRoute(t *testing.T) {
 
 func TestSuccess(t *testing.T) {
 	f, dir := newFake(), t.TempDir()
-	r, err := Submit(context.Background(), f.exec, dir, draft)
+	d := draft
+	d.ReportID = NewReportID()
+	r, err := Submit(context.Background(), f.exec, dir, d)
 	if err != nil || r.GistURL != "https://gist.github.com/abc" || !strings.HasSuffix(r.IssueURL, "/issues/7") {
 		t.Fatal(r, err)
 	}
@@ -85,6 +87,13 @@ func TestSuccess(t *testing.T) {
 	}
 	if p, _ := Pending(dir); len(p) != 0 {
 		t.Fatal("not Published", p)
+	}
+	s, err := load(filepath.Join(dir, d.ReportID, "state.json"))
+	if err != nil || s.Draft.Attachment != nil || s.Draft.Body != "" || s.IssueURL == "" {
+		t.Fatalf("published draft still holds the payload or lost its URL: %+v %v", s, err)
+	}
+	if r2, err := Submit(context.Background(), f.exec, dir, d); err != nil || r2 != r || f.count("issue create") != 1 {
+		t.Fatal("re-submit of a published report must return the stored result", r2, err, f.calls)
 	}
 }
 

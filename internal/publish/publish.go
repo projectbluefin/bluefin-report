@@ -361,6 +361,10 @@ func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
 }
 
 func save(dir string, s *Saved) error {
+	if s.Stage == Published {
+		// Once on GitHub, the local copy of the reviewed payload has no use; keep only id and URLs.
+		s.Draft.Attachment, s.Draft.Body = nil, ""
+	}
 	d := filepath.Join(dir, s.ReportID)
 	if err := os.MkdirAll(d, 0o700); err != nil {
 		return err
