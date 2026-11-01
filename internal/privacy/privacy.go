@@ -41,6 +41,9 @@ type Payload struct {
 	Removed map[string]int    // rule → number of values removed or rewritten
 	Omitted []string          // families dropped to fit the budget
 	Extras  map[string]string // Options.Extras after redaction, for the issue body
+	// Summary is the snapshot summary with its unit names and warnings redacted, for the
+	// issue body. Unit names carry identities too (var-home-<user>-….mount, sshd@…-<ip>:<port>.service).
+	Summary snapshot.Summary
 }
 
 type document struct {
@@ -144,6 +147,11 @@ func Build(s snapshot.Snapshot, opt Options) (Payload, error) {
 			doc.Extras[k] = r.text(v)
 		}
 	}
+	// The issue body lists failed units from both scopes whether or not the user report is attached.
+	scrubbed := s
+	scrubbed.Warnings = r.texts(s.Warnings)
+	sum := scrubbed.Summary() // derives Unreachable from the scrubbed warnings
+	sum.FailedUnits = r.texts(sum.FailedUnits)
 
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -163,7 +171,7 @@ func Build(s snapshot.Snapshot, opt Options) (Payload, error) {
 			return Payload{}, err
 		}
 	}
-	return Payload{JSON: out, Removed: r.removed, Omitted: doc.OmittedFamilies, Extras: doc.Extras}, nil
+	return Payload{JSON: out, Removed: r.removed, Omitted: doc.OmittedFamilies, Extras: doc.Extras, Summary: sum}, nil
 }
 
 type redactor struct {
@@ -289,6 +297,18 @@ func (r *redactor) text(s string) string {
 		s = r.replace(re, s, r.names[i], "["+r.names[i]+"]")
 	}
 	return s
+}
+
+// texts scrubs a copy of each string, leaving the input slice untouched.
+func (r *redactor) texts(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	out := make([]string, len(in))
+	for i, v := range in {
+		out[i] = r.text(v)
+	}
+	return out
 }
 
 func (r *redactor) addresses(s string) string {

@@ -3,6 +3,7 @@ package privacy
 import (
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -126,6 +127,35 @@ func TestBuildScrubsMachineAndBootIDCopies(t *testing.T) {
 	}
 	if p.Removed["machine ID"] != 1 || p.Removed["boot ID"] != 2 {
 		t.Errorf("Removed = %v", p.Removed)
+	}
+}
+
+// The issue body lists failed units from the summary, not from the attachment, so the
+// summary must be scrubbed too: unit names carry the hostname, the username and addresses.
+func TestBuildScrubsSummaryForIssueBody(t *testing.T) {
+	s := sample()
+	s.Warnings = []string{"Unable to connect to orca-desk: /var/home/jorge/.local/bus at 10.0.0.7:22"}
+	p, err := Build(s, Options{Username: "jorge"}) // user report not attached; its failed units are still listed
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"system: [hostname]-backup.service", "system: rpc-statd.service", "system: var-home-[username]-vault.mount"}
+	if !slices.Equal(p.Summary.FailedUnits, want) {
+		t.Errorf("Summary.FailedUnits = %q, want %q", p.Summary.FailedUnits, want)
+	}
+	wantWarn := []string{"Unable to connect to [hostname]: ~/.local/bus at [ipv4]:22"}
+	if !slices.Equal(p.Summary.Warnings, wantWarn) || !slices.Equal(p.Summary.Unreachable, wantWarn) {
+		t.Errorf("Summary.Warnings = %q, Unreachable = %q, want %q", p.Summary.Warnings, p.Summary.Unreachable, wantWarn)
+	}
+	if p.Summary.ImageID != "dakota-gaming" || p.Summary.Kernel != "7.2.11-ogc4" {
+		t.Errorf("Summary lost diagnostics: %+v", p.Summary)
+	}
+	if raw := s.Summary(); slices.Equal(raw.FailedUnits, p.Summary.FailedUnits) || !slices.Equal(raw.Warnings, []string{s.Warnings[0]}) {
+		t.Error("Build must scrub a copy and leave the snapshot's summary untouched")
+	}
+	// One more address and home path than the metrics alone: Unreachable repeats Warnings but is not counted twice.
+	if p.Removed["IPv4 address"] != 3 || p.Removed["home path"] != 2 {
+		t.Errorf("Removed = %v, want IPv4 address: 3, home path: 2", p.Removed)
 	}
 }
 
