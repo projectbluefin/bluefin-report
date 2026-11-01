@@ -203,7 +203,7 @@ func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
 		return r, fmt.Errorf("issue filed at %s, but %s failed (retry to finish): %w: %s", s.IssueURL, what, err, strings.TrimSpace(string(errb)))
 	}
 	final := Published
-	if len(d.Screenshots) > 0 && d.Mode == NewIssue {
+	if len(d.Screenshots) > 0 && d.Mode == NewIssue && !s.ShotsArtifact {
 		final = ShotsPending
 	}
 	if d.Mode == Confirm || d.Mode == Update {
@@ -251,13 +251,15 @@ func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
 		// refuses artifacts outright (no permission, preview unavailable) does it fall back to a secret
 		// gist linked in a comment; transient failures leave the draft pending for Resume.
 		exists, refused := false, false
-		if d.Attachment != nil && !fresh {
+		var artifacts []string
+		if (d.Attachment != nil || len(d.Screenshots) > 0) && !fresh {
 			out, errb, err := gh(ctx, nil, "issue", "artifact", "list", n, "-R", d.Repo, "--json", "name", "--jq", ".[].name")
 			if err != nil && !artifactsRefused(errb) {
 				return warn("reading artifacts", err, errb)
 			}
 			refused = err != nil
-			exists = slices.Contains(strings.Split(strings.TrimSpace(string(out)), "\n"), name)
+			artifacts = strings.Split(strings.TrimSpace(string(out)), "\n")
+			exists = slices.Contains(artifacts, name)
 		}
 		if d.Attachment != nil && !exists && !refused {
 			doc := slices.Concat([]byte("```json\n"), d.Attachment, []byte("\n```\n"))
@@ -268,8 +270,28 @@ func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
 				refused = true
 			}
 		}
+		if len(d.Screenshots) > 0 && !refused {
+			// One Markdown artifact; gh appends every unreferenced --attach image to it. A partial
+			// upload still saves the artifact, so a retry finds it by name and does not upload again.
+			shots := shotsArtifactName(d)
+			if !slices.Contains(artifacts, shots) {
+				args := append([]string{"issue", "artifact", "create", n, "--body-file", "-", "--name", shots, "-R", d.Repo}, attachArgs(d.Screenshots)...)
+				if _, errb, err := gh(ctx, []byte("Screenshots\n"), args...); err != nil {
+					if !artifactsRefused(errb) {
+						return warn("uploading screenshots", err, errb)
+					}
+				} else {
+					s.ShotsArtifact = true
+				}
+			} else {
+				s.ShotsArtifact = true
+			}
+			if s.ShotsArtifact && final == ShotsPending {
+				final = Published
+			}
+		}
 		s.Stage, freshShots = final, true
-		if refused {
+		if refused && d.Attachment != nil {
 			s.Stage = GistPending
 		}
 		if err := save(dir, s); err != nil {
@@ -355,7 +377,10 @@ func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
 				kind = "update"
 			}
 			body += "\n\n" + marker + "\n<!-- bluefin-report-" + kind + " -->"
-			args := append([]string{"issue", "comment", "--repo", d.Repo, "--body-file", "-"}, attachArgs(d.Screenshots)...)
+			args := []string{"issue", "comment", "--repo", d.Repo, "--body-file", "-"}
+			if !s.ShotsArtifact {
+				args = append(args, attachArgs(d.Screenshots)...)
+			}
 			if _, errb, err := gh(ctx, []byte(body), append(args, "--", n)...); err != nil {
 				return warn("commenting", err, errb)
 			}

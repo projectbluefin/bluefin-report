@@ -182,7 +182,7 @@ Use `gh` (Homebrew) rather than a token store of our own. Beta 1 corrections:
 - Fallback only when artifacts are refused outright (HTTP 401/403/404/410/422, or a gh without the preview command): a **secret gist** (`gh gist create`, no `--public`; not listed on the profile, readable by anyone with the link) linked in one issue comment `Full report: <gist>` carrying the report-id marker. Transient failures stay pending for Resume.
 - Labels: create the issue through REST (`gh api --method POST repos/<repo>/issues`) with `kind/bug`, the optional `area/*` the reporter picked, and issue type `Bug`. REST silently drops labels and type for reporters without push access (GraphQL would fail the whole create), so when the returned labels lack them the app posts one `/kind bug` (and `/area …`) comment, which Prow accepts from anyone. `needs-triage` → `triage/accepted` stays with maintainers. The `<!-- hive-queue: … -->` marker stays in the body.
 - Before attaching on Resume, `gh issue artifact list N --json name` is checked for `systemd-report.json`; before the fallback comment, the issue's comments are checked for the report-id marker.
-- Screenshots: Submit checks ≤ 10 files, ≤ 10 MiB each, image/video extensions before any network call, then copies them into `<draft>/screenshots/` (0600). NewIssue posts one `gh issue comment N --body-file - --attach <file>…` with body `Screenshots` + `<!-- bluefin-report-screenshots: ID -->` from stage `ShotsPending` (Resume checks comments for that marker first); Confirm passes `--attach` on the confirmation comment. Copies are deleted when Published. Screenshots are not scrubbed; the consent text says so.
+- Screenshots: Submit checks ≤ 10 files, ≤ 10 MiB each, image extensions before any network call, then copies them into `<draft>/screenshots/` (0600). Right after the report artifact, they are uploaded as one Markdown issue artifact: `gh issue artifact create N --body-file - --name screenshots.md --attach <file>…` (Confirm/Update: `screenshots-<ID>.md`); gh appends each image to that document. Resume lists artifacts first, so an existing `screenshots.md` is never uploaded twice (a partial upload is kept as-is). `ShotsArtifact` in `state.json` records success. Only when artifacts are refused does NewIssue fall back to one `gh issue comment N --attach <file>…` with `<!-- bluefin-report-screenshots: ID -->` from stage `ShotsPending`, and Confirm to `--attach` on its confirmation comment. Copies are deleted when Published. Screenshots are not scrubbed; the consent text says so.
 - Issue URL comes from the REST response.
 
 ### Publication is not atomic — model it
@@ -198,8 +198,8 @@ stateDiagram-v2
     IssuePending --> IssueCreated: URL recorded
     IssuePending --> Uncertain: crash or timeout
     IssueCreated --> LabelsDone: kind/area ensured
-    LabelsDone --> Published: artifact attached (or none), no screenshots
-    LabelsDone --> ShotsPending: artifact attached, screenshots chosen
+    LabelsDone --> Published: report and screenshots artifacts attached (or none)
+    LabelsDone --> ShotsPending: screenshots artifact refused
     ShotsPending --> Published: screenshots comment posted
     LabelsDone --> GistPending: artifacts refused
     GistPending --> GistCreated: URL recorded
@@ -214,7 +214,7 @@ stateDiagram-v2
 
 - Each draft carries a random `report-id` written into an HTML comment in the issue body (and, on fallback, the gist description and link comment).
 - **Uncertain** is resolved by lookup, not by retrying, through consistent REST list endpoints rather than lagging search: the user's issues on the target repo by `creator` with the report-id marker, or, once the issue exists, the user's recent gists by description. Only if nothing is found is the write retried. Artifact and comment steps after the issue exists re-check before writing instead.
-- Confirm: stages LabelsDone (artifact, listed by its per-report name first) → GistPending/GistCreated on refusal → CommentPending (Resume checks comments for the report-id marker) → Published.
+- Confirm: stages LabelsDone (report and screenshots artifacts, each listed by its per-report name first) → GistPending/GistCreated on refusal → CommentPending (Resume checks comments for the report-id marker) → Published.
 
 ## 8. Stack and packaging
 

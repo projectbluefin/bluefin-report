@@ -65,7 +65,7 @@ const (
 	GistPending    Stage = "GistPending"  // artifacts refused: fallback secret gist not yet created
 	GistCreated    Stage = "GistCreated"  // fallback gist exists; its link comment not yet posted
 	Published      Stage = "Published"
-	ShotsPending   Stage = "ShotsPending"   // NewIssue: report done; screenshots comment not yet confirmed
+	ShotsPending   Stage = "ShotsPending"   // NewIssue, artifacts refused: report done; screenshots comment not yet confirmed
 	CommentPending Stage = "CommentPending" // Confirm/Update: report attached; comment not yet confirmed
 	Uncertain      Stage = "Uncertain"
 	Unfinished     Stage = "Unfinished" // saved while writing; never published until the user reviews it again
@@ -79,6 +79,14 @@ func artifactName(d Draft) string {
 	return "systemd-report.json"
 }
 
+// shotsArtifactName names the Markdown artifact that holds the uploaded screenshots.
+func shotsArtifactName(d Draft) string {
+	if d.Mode == Confirm || d.Mode == Update {
+		return "screenshots-" + d.ReportID + ".md"
+	}
+	return "screenshots.md"
+}
+
 // Saved is the on-disk state of one draft.
 type Saved struct {
 	ReportID  string
@@ -88,6 +96,8 @@ type Saved struct {
 	GistURL   string
 	IssueURL  string
 	StartedAt time.Time
+	// ShotsArtifact is set once the screenshots artifact exists; otherwise they go in a comment.
+	ShotsArtifact bool `json:",omitempty"`
 	// Digest covers the reviewed draft (screenshot bytes included); Resume refuses a draft edited on disk.
 	// Empty for drafts saved before it existed, which are trusted.
 	Digest string `json:",omitempty"`
