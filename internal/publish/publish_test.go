@@ -222,6 +222,17 @@ func TestResumeNotSignedIn(t *testing.T) {
 	}
 }
 
+func TestResumeRejectsRepoOutsideAllowlist(t *testing.T) {
+	dir := t.TempDir()
+	if err := save(dir, &Saved{ReportID: "abc123", Stage: Reviewed, Draft: Draft{Repo: "projectbluefin/bluefin", Title: "t", Body: "b"}}); err != nil {
+		t.Fatal(err)
+	}
+	f := newFake()
+	if _, err := Resume(context.Background(), f.exec, dir, "abc123"); err == nil || len(f.calls) != 0 {
+		t.Fatal("old-routing draft resumed:", err, f.calls)
+	}
+}
+
 func TestIssueRef(t *testing.T) {
 	const repo = "projectbluefin/dakota"
 	for _, ok := range []string{"12", "#12", "https://github.com/projectbluefin/dakota/issues/12", "https://github.com/ProjectBluefin/Dakota/issues/12#issuecomment-1"} {

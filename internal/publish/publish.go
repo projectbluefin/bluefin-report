@@ -219,6 +219,9 @@ func Resume(ctx context.Context, gh Exec, stateDir, reportID string) (Result, er
 	if err != nil {
 		return Result{}, err
 	}
+	if !slices.Contains(Repos, s.Draft.Repo) { // drafts saved under older routing
+		return Result{}, fmt.Errorf("refusing to publish to %q: not an image repo that accepts reports", s.Draft.Repo)
+	}
 	if _, _, err := gh(ctx, nil, "auth", "status"); err != nil {
 		return Result{}, ErrNotSignedIn
 	}
