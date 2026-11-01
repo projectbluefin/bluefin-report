@@ -144,7 +144,7 @@ Rules:
 | Resources | `io.systemd.CGroup` | CGroup |
 | Logs | `io.systemd.Journal` | Journal (often permission-denied for users) |
 
-Beta 1's "Sleep/Crash", "Bootc/Update" and "Flatpak" profiles are **removed**: no source on this host provides that data. Add them when a source exists, not before. A profile whose sources are missing is shown disabled with the reason; it is never shown as "nothing found".
+Beta 1's "Sleep/Crash", "Bootc/Update" and "Flatpak" profiles are **removed** as systemd-report profiles: no source on this host provides that data (`io.systemd.Journal` stays unreachable, its socket is `root:systemd-journal`). They are covered instead by unprivileged opt-in sections in `internal/extras` (Kernel Problems in the Previous Boot, Desktop Warnings, Update and Boot Warnings, Network Warnings and Device State, Flatpak and Portal Warnings, Disks and Graphics) that run `journalctl` directly, since the system journal is readable through the wheel/adm ACL on `/var/log/journal`. Still no root, no polkit (§1). A profile whose sources are missing is shown disabled with the reason; it is never shown as "nothing found".
 
 ## 6. Privacy
 
@@ -287,5 +287,5 @@ Status: **Kept** = shipped, possibly reshaped. **Follow-up** = belongs to the cu
 | HTTPS/mTLS upload profiles (`--url`, `--cert`, `--key`, `--trust`) | Deferred | §1 non-goal for end users (fleet use, needs client certs). Possible later. |
 | `report.files` manager with Polkit | Rejected | §1: no root, no polkit policy. `io.systemd.Files.*` stays opt-in per entry (§6). |
 | Periodic reporting `.timer` control | Rejected | Enabling a system timer needs privilege (§1: no root) and serves fleets, not a user filing one bug. |
-| Companion tools: `systemd-analyze security`/`plot`/`blame`, `systemd-pcrlock`/`systemd-measure`, `systemd-cgtop`, `varlinkctl` | Rejected | Inspector features, not reporting. A single read-only diagnostic may still be proposed, in its own issue, as one more opt-in report extra (existing ones: boot errors, crashes, GNOME extensions, Flatpaks; see `internal/extras`). |
+| Companion tools: `systemd-analyze security`/`plot`/`blame`, `systemd-pcrlock`/`systemd-measure`, `systemd-cgtop`, `varlinkctl` | Rejected | Inspector features, not reporting. A single read-only diagnostic may still be proposed, in its own issue, as one more opt-in report extra (existing ones: boot errors, crashes, previous-boot kernel problems, desktop/update/network/portal warnings, disks and graphics, GNOME extensions, Flatpaks; see `internal/extras`). |
 | Four-view `AdwNavigationSplitView` | Rejected | §4: replaced by the `AdwNavigationView` journey. |

@@ -370,6 +370,35 @@ func TestExtrasAreRedacted(t *testing.T) {
 	}
 }
 
+// NetworkManager quotes connection names and SSIDs, which locate the reporter.
+// Their removal is counted so Review lists it.
+func TestNetworkLogDropsConnectionNames(t *testing.T) {
+	log := "<warn> device (wlp2s0): Activation: failed for connection 'Home Wifi 5G' on orca-desk"
+	p, err := Build(sample(), Options{Extras: map[string]string{"networkLog": log, "bootErrors": "unit 'x' failed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.Extras["networkLog"], "<warn> device (wlp2s0): Activation: failed for connection '[name]' on [hostname]"; got != want {
+		t.Fatalf("networkLog = %q, want %q", got, want)
+	}
+	if p.Removed["connection name"] != 1 || p.Extras["bootErrors"] != "unit 'x' failed" {
+		t.Fatalf("removed %v, bootErrors %q", p.Removed, p.Extras["bootErrors"])
+	}
+}
+
+// Extension UUIDs look like addresses but name public extensions; they must stay
+// readable while the reporter's identity is still removed.
+func TestGnomeExtensionsKeepUUIDs(t *testing.T) {
+	list := "dash-to-dock@micxgx.gmail.com\ngsconnect@andyholmes.github.io\norca-desk@jorge.example.com"
+	p, err := Build(sample(), Options{Username: "jorge", Extras: map[string]string{"gnomeExtensions": list}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.Extras["gnomeExtensions"], "dash-to-dock@micxgx.gmail.com\ngsconnect@andyholmes.github.io\n[hostname]@[username].example.com"; got != want {
+		t.Fatalf("gnomeExtensions = %q, want %q", got, want)
+	}
+}
+
 // The artifact is the payload inside a ```json fence; together they must stay under 1 MiB.
 func TestDefaultBudgetLeavesRoomForFence(t *testing.T) {
 	s := sample()

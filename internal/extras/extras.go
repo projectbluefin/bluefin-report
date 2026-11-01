@@ -1,6 +1,7 @@
 // Package extras collects what systemd-report does not: image identity for the Overview,
-// and opt-in diagnostic sections. Every probe is unprivileged and tolerant of failure:
-// a missing tool or file yields "" rather than an error.
+// and opt-in diagnostic sections (journal excerpts, device state, disk and GPU readings).
+// Every probe runs as the logged-in user, is read-only, and tolerates failure: a missing
+// tool or file yields "" rather than an error.
 package extras
 
 import (
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -132,15 +134,110 @@ func gpus() string {
 type Section struct {
 	Key, Title string
 	Details    bool
-	cmd        []string
+	collect    func(context.Context) string
+}
+
+// part is one source of a section: a header line naming it, and its output.
+type part struct {
+	head string
+	get  func(context.Context) string
+}
+
+func sh(name string, args ...string) part {
+	return part{"$ " + name + " " + strings.Join(args, " "), func(ctx context.Context) string { return run(ctx, name, args...) }}
+}
+
+// join renders the non-empty parts under their headers, a blank line between; a
+// missing tool contributes nothing.
+func join(ps ...part) func(context.Context) string {
+	return func(ctx context.Context) string {
+		var out []string
+		for _, p := range ps {
+			if v := p.get(ctx); v != "" {
+				out = append(out, p.head+"\n"+v)
+			}
+		}
+		return strings.Join(out, "\n\n")
+	}
+}
+
+// warnings is the newest n warning-or-worse journal entries of this boot matching match.
+func warnings(n string, match ...string) part {
+	return sh("journalctl", append([]string{"-b0", "-p", "warning", "-n", n, "--no-pager", "-o", "short", "--no-hostname"}, match...)...)
 }
 
 var Sections = []Section{
-	{"bootErrors", "Errors From This Boot", true, []string{"journalctl", "-b0", "-p", "err", "--no-pager", "-n", "40", "-o", "short", "--no-hostname"}},
-	{"crashes", "Crashes in the Last 7 Days", true, []string{"coredumpctl", "list", "--no-pager", "--since", "-7d"}},
-	{"gnomeExtensions", "Enabled GNOME Extensions", false, []string{"gnome-extensions", "list", "--enabled"}},
-	{"flatpaks", "Installed Flatpak Apps", false, []string{"flatpak", "list", "--app", "--columns=application,version"}},
+	{"bootErrors", "Errors From This Boot", true, sh("journalctl", "-b0", "-p", "err", "--no-pager", "-n", "40", "-o", "short", "--no-hostname").get},
+	{"crashes", "Crashes in the Last 7 Days", true, sh("coredumpctl", "list", "--no-pager", "--since", "-7d").get},
+	// No -n: with --grep it makes journalctl print newest-first. One boot's kernel
+	// log is small, and run keeps only the newest 64 KiB anyway.
+	{"previousBoot", "Kernel Problems in the Previous Boot", false, sh("journalctl", "-b", "-1", "-k", "--no-pager", "-o", "short", "--no-hostname",
+		"--case-sensitive=false", "--grep", "panic|oops|bug:|call trace|suspend|hibernate|resume|hung task|lockup").get},
+	{"desktopLog", "Desktop Warnings", false, warnings("200", "_SYSTEMD_UNIT=gdm.service", "+", "_COMM=gnome-shell").get},
+	{"updateLog", "Update and Boot Warnings", false, warnings("250", "-u", "bootc-fetch-apply-updates.service", "-u", "rpm-ostreed.service", "-u", "systemd-boot-update.service").get},
+	{"networkLog", "Network Warnings and Device State", false, join(
+		warnings("250", "-u", "NetworkManager.service"),           // quoted connection names: removed by privacy
+		sh("nmcli", "-t", "-f", "TYPE,STATE", "device", "status"), // no DEVICE/CONNECTION: interface and SSID names identify networks
+	)},
+	// Portals run as user units; the glob also catches backends (-gnome, -gtk).
+	{"portalLog", "Flatpak and Portal Warnings", false, warnings("250", "-u", "flatpak-system-helper.service", "--user-unit", "xdg-desktop-portal*").get},
+	{"hardware", "Disks and Graphics", false, join(
+		sh("lsblk", "-d", "-e", "7,11", "-o", "KNAME,SIZE,ROTA,TRAN,MODEL"), // KNAME: mapper aliases can be WWIDs; never SERIAL/WWN
+		sh("nvidia-smi", "--query-gpu=name,driver_version,pstate,temperature.gpu,utilization.gpu,memory.used,memory.total,power.draw", "--format=csv"),
+		part{"# amdgpu: /sys/class/drm/card*/device", func(context.Context) string { return amdgpus() }},
+	)},
+	{"gnomeExtensions", "Enabled GNOME Extensions", false, sh("gnome-extensions", "list", "--enabled").get},
+	{"flatpaks", "Installed Flatpak Apps", false, sh("flatpak", "list", "--app", "--columns=application,version").get},
 }
+
+func num(p string) (float64, bool) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(read(p)), 64)
+	return v, err == nil
+}
+
+// amdgpus reports load, memory, temperature and power of each amdgpu card, one line each;
+// values the driver does not expose are left out.
+func amdgpus() string {
+	ents, _ := os.ReadDir(filepath.Join(Root, "sys/class/drm"))
+	var out []string
+	for _, e := range ents {
+		if !reCard.MatchString(e.Name()) {
+			continue
+		}
+		dev := filepath.Join("sys/class/drm", e.Name(), "device")
+		busy, ok := num(filepath.Join(dev, "gpu_busy_percent"))
+		if !ok {
+			continue
+		}
+		f := []string{fmt.Sprintf("busy %.0f%%", busy)}
+		for _, m := range []string{"vram", "gtt"} {
+			u, ok1 := num(filepath.Join(dev, "mem_info_"+m+"_used"))
+			t, ok2 := num(filepath.Join(dev, "mem_info_"+m+"_total"))
+			if ok1 && ok2 {
+				f = append(f, fmt.Sprintf("%s %.1f GiB / %.1f GiB", strings.ToUpper(m), u/(1<<30), t/(1<<30)))
+			}
+		}
+		if hw, _ := filepath.Glob(filepath.Join(Root, dev, "hwmon/hwmon*")); len(hw) > 0 {
+			h, _ := filepath.Rel(Root, hw[0])
+			if v, ok := num(filepath.Join(h, "temp1_input")); ok {
+				f = append(f, fmt.Sprintf("temp %.0f°C", v/1000))
+			}
+			v, ok := num(filepath.Join(h, "power1_average"))
+			if !ok {
+				v, ok = num(filepath.Join(h, "power1_input")) // APUs
+			}
+			if ok {
+				f = append(f, fmt.Sprintf("power %.0f W", v/1e6))
+			}
+		}
+		out = append(out, e.Name()+": "+strings.Join(f, ", "))
+	}
+	return strings.Join(out, "\n")
+}
+
+// MaxSection caps each section so that ten of them stay under the 1 MiB attachment even
+// if every byte is JSON-escaped to six (`<` → \u003c): 10 × 16 KiB × 6 < privacy.MaxBytes.
+const MaxSection = 16 << 10
 
 // Collect runs only the sections whose keys are given. Call it off the main thread.
 func Collect(ctx context.Context, keys []string) map[string]string {
@@ -148,7 +245,12 @@ func Collect(ctx context.Context, keys []string) map[string]string {
 	for _, s := range Sections {
 		for _, k := range keys {
 			if k == s.Key {
-				out[k] = run(ctx, s.cmd[0], s.cmd[1:]...)
+				v := s.collect(ctx)
+				if len(v) > MaxSection { // keep the newest whole lines
+					v = v[len(v)-MaxSection:]
+					v = v[strings.IndexByte(v, '\n')+1:]
+				}
+				out[k] = v
 			}
 		}
 	}

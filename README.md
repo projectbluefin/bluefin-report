@@ -70,7 +70,11 @@ When Overview shows a problem, Get Help Fixing This copies a short summary
   errors from this boot (`journalctl -b0 -p err`, last 40 lines), crashes in the last
   7 days (`coredumpctl list`), enabled GNOME extensions, installed Flatpak apps. They are
   scrubbed like the report and attached under `extras`; errors and crashes also appear
-  collapsed in the issue text.
+  collapsed in the issue text. Also opt-in, unprivileged and only in the attached report:
+  kernel problems in the previous boot, desktop, update/boot, network, and Flatpak/portal
+  warnings from this boot's journal, and disks and graphics (`lsblk`, `nvidia-smi`, AMD sysfs).
+  Network warnings also lose quoted connection names and SSIDs; extension IDs such as
+  `dash-to-dock@micxgx.gmail.com` are kept although they look like email addresses.
 - Always shown: image ref, tag and manifest digest, CPU model, GPUs (PCI IDs and driver),
   GNOME Shell version.
 - Sent byte-for-byte as shown in Review; editing anything withdraws consent.

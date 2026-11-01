@@ -8,7 +8,7 @@ Design and status: [systemd-report-design-plan.md](systemd-report-design-plan.md
 - `cmd/bluefin-report`: entry point and flags (`--dry-run`, `--print-summary`)
 - `internal/snapshot`: runs `systemd-report` and parses it
 - `internal/privacy`: scrubs the payload before anything leaves the machine
-- `internal/extras`: unprivileged probes systemd-report can't provide (image ref/tag/digest, CPU, GPU, GNOME) and the opt-in diagnostics (boot errors, crashes, extensions, Flatpaks)
+- `internal/extras`: unprivileged probes systemd-report can't provide (image ref/tag/digest, CPU, GPU, GNOME) and the opt-in diagnostics (boot errors, crashes, previous-boot kernel problems, desktop/update/network/portal warnings, disks and graphics, extensions, Flatpaks)
 - `internal/publish`: issue, labels, report artifact (gist fallback) and screenshots through `gh`, resumable by report ID
 - `internal/ui`: the GTK app
 - `data/`: desktop file, AppStream metainfo, icon
