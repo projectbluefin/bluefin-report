@@ -91,7 +91,10 @@ type ui struct {
 	// compose
 	mode        publish.Mode
 	composePage *adw.NavigationPage
-	repo        *adw.ComboRow
+	repo        *adw.ActionRow // shows repoName; there is no choice: reports go to the running image's repo
+	repoName    string
+	helpGroup   *adw.PreferencesGroup
+	helpBtns    *gtk.FlowBox
 	title       *adw.EntryRow
 	issueRef    *adw.EntryRow
 	desc        *gtk.TextBuffer
@@ -349,6 +352,7 @@ func (u *ui) buildOverview() *adw.NavigationPage {
 	hg.Add(&u.health.Widget)
 
 	help := group("Get help")
+	u.helpGroup = help
 	btns := gtk.NewFlowBox() // two pills side by side, stacked when narrow
 	btns.SetSelectionMode(gtk.SelectionNoneValue)
 	btns.SetMaxChildrenPerLine(2)
@@ -358,6 +362,8 @@ func (u *ui) buildOverview() *adw.NavigationPage {
 	btns.Append(&pill("Report a Problem", func() { u.openCompose(publish.NewIssue) }).Widget)
 	btns.Append(&pill("Confirm Existing Issue", func() { u.openCompose(publish.Confirm) }).Widget)
 	help.Add(&btns.Widget)
+	btns.SetSensitive(false) // until a snapshot tells us which repo this image reports to
+	u.helpBtns = btns
 
 	browse := adw.NewActionRow()
 	browse.SetTitle("Browse all metrics")
@@ -434,6 +440,13 @@ func (u *ui) loaded(s snapshot.Snapshot, err error) {
 	}
 	u.snap = &s
 	u.sum = s.Summary()
+	u.repoName = publish.Route(u.sum.ImageID)
+	u.helpBtns.SetSensitive(u.repoName != "")
+	if u.repoName == "" {
+		u.helpGroup.SetDescription("Reporting isn't available for this image (" + u.sum.ImageID + "). Only Dakota and Utah accept reports.")
+	} else {
+		u.helpGroup.SetDescription("Reports go to " + u.repoName + ", the repository for the image this system runs.")
+	}
 	for i, v := range []string{u.sum.Name, u.sum.ImageVersion, u.sum.ImageID, u.sum.Kernel, u.sum.Arch, u.sum.SystemState} {
 		if v == "" {
 			v = "Unknown"
@@ -546,12 +559,11 @@ func (u *ui) buildMetrics() {
 
 func (u *ui) buildCompose() {
 	g := adw.NewPreferencesGroup()
-	u.repo = adw.NewComboRow()
+	u.repo = adw.NewActionRow()
 	u.repo.SetTitle("Project")
-	u.repo.SetModel(gtk.NewStringList(publish.Repos))
+	u.repo.SetSubtitleSelectable(true)
 	g.Add(&u.repo.Widget)
 	sync := hold(func(gobject.Object, uintptr) { u.syncReview() })
-	u.repo.ConnectNotify(sync) // the issue link must match the chosen repo
 
 	u.title = adw.NewEntryRow()
 	u.title.SetTitle("Title")
@@ -617,7 +629,7 @@ func (u *ui) syncReview() {
 	msg := ""
 	if u.mode == publish.Confirm {
 		ref := strings.TrimSpace(u.issueRef.GetText())
-		_, err := publish.ParseIssueRef(publish.Repos[u.repo.GetSelected()], ref)
+		_, err := publish.ParseIssueRef(u.repoName, ref)
 		ok = err == nil
 		if err != nil && ref != "" {
 			msg = err.Error()
@@ -644,12 +656,7 @@ func (u *ui) openCompose(m publish.Mode) {
 	} else {
 		u.composePage.SetTitle("Confirm Existing Issue")
 	}
-	route := publish.Route(u.sum.ImageID)
-	for i, r := range publish.Repos {
-		if r == route {
-			u.repo.SetSelected(uint32(i))
-		}
-	}
+	u.repo.SetSubtitle(u.repoName)
 	u.syncReview()
 	u.nav.PushByTag("compose")
 }
@@ -847,7 +854,7 @@ func (u *ui) publish() {
 	d := publish.Draft{
 		ReportID: u.reportID,
 		Mode:     u.mode,
-		Repo:     publish.Repos[u.repo.GetSelected()],
+		Repo:     u.repoName,
 		Body:     bufText(u.issueText),
 	}
 	if d.Mode == publish.NewIssue {

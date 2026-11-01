@@ -164,16 +164,15 @@ Regex redaction is best-effort and the UI says so in one line, not a paragraph.
 ## 7. Sharing to GitHub
 
 ### Routing
-Read `ID`/`IMAGE_ID` from the Basic OS-release metrics:
+Read `IMAGE_ID` from the Basic OS-release metrics. A machine reports only to the repo of the image it runs:
 
 | Image | Repo |
 | :--- | :--- |
-| `bluefin-lts*` | `projectbluefin/bluefin-lts` |
-| `bluefin*` | `projectbluefin/bluefin` |
-| `dakota*` | `projectbluefin/dakota` |
-| anything else, feature requests | `projectbluefin/common` |
+| `dakota`, `dakota-*` | `projectbluefin/dakota` |
+| `utah`, `utah-*` | `projectbluefin/utah` |
+| anything else | none: Report a Problem and Confirm Existing Issue are disabled, with the reason shown |
 
-The repo is shown and editable (combo of the four). The router accepts only owner `projectbluefin`; anything else is rejected before any network call. One check, one place.
+The repo is shown, not chosen. `publish.Submit` accepts only these two repos and rejects anything else before any network call. One check, one place.
 
 ### Transport
 Use `gh` (Homebrew) rather than a token store of our own. Beta 1 corrections:

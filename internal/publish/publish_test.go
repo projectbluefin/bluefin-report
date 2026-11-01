@@ -54,23 +54,29 @@ func (f *fake) count(prefix string) int {
 func newFake() *fake {
 	return &fake{fail: map[string]bool{}, out: map[string]string{
 		"gist create":   "https://gist.github.com/abc\n",
-		"issue create":  "Creating issue\nhttps://github.com/projectbluefin/bluefin/issues/7\n",
-		"issue comment": "https://github.com/projectbluefin/bluefin/issues/3#c1\n",
+		"issue create":  "Creating issue\nhttps://github.com/projectbluefin/dakota/issues/7\n",
+		"issue comment": "https://github.com/projectbluefin/dakota/issues/3#c1\n",
 		"api user":      "me\n",
 	}}
 }
 
-var draft = Draft{Repo: "projectbluefin/bluefin", Title: "t", Body: "b", Attachment: []byte("{}"), Queue: "3-human-queue"}
+var draft = Draft{Repo: "projectbluefin/dakota", Title: "t", Body: "b", Attachment: []byte("{}"), Queue: "3-human-queue"}
 
 func TestRoute(t *testing.T) {
-	for id, want := range map[string]string{"bluefin-lts": "projectbluefin/bluefin-lts", "bluefin-dx": "projectbluefin/bluefin", "dakota": "projectbluefin/dakota", "fedora": "projectbluefin/common"} {
+	for id, want := range map[string]string{
+		"dakota": "projectbluefin/dakota", "dakota-gaming": "projectbluefin/dakota", "dakota-nvidia": "projectbluefin/dakota",
+		"utah": "projectbluefin/utah", "utah-dx": "projectbluefin/utah",
+		"bluefin": "", "bluefin-lts": "", "dakotax": "", "": "",
+	} {
 		if got := Route(id); got != want {
-			t.Errorf("Route(%q)=%q", id, got)
+			t.Errorf("Route(%q)=%q, want %q", id, got, want)
 		}
 	}
-	f := newFake()
-	if _, err := Submit(context.Background(), f.exec, t.TempDir(), Draft{Repo: "evil/bluefin"}); err == nil || len(f.calls) != 0 {
-		t.Fatal("non-projectbluefin repo not rejected before network")
+	for _, repo := range []string{"evil/dakota", "projectbluefin/bluefin", "projectbluefin/bluefin-lts", "projectbluefin/common"} {
+		f := newFake()
+		if _, err := Submit(context.Background(), f.exec, t.TempDir(), Draft{Repo: repo}); err == nil || len(f.calls) != 0 {
+			t.Errorf("%s not rejected before network", repo)
+		}
 	}
 }
 
@@ -139,7 +145,7 @@ func TestUncertainResume(t *testing.T) {
 		f.fail["issue create"] = false
 		f.fail["search issues"] = true // search index lags; must not be used
 		if found {
-			f.out["api issues"] = "https://github.com/projectbluefin/bluefin/issues/9\n"
+			f.out["api issues"] = "https://github.com/projectbluefin/dakota/issues/9\n"
 		}
 		r, err := Resume(context.Background(), f.exec, dir, p[0].ReportID)
 		if err != nil {
@@ -155,7 +161,7 @@ func TestUncertainResume(t *testing.T) {
 		if f.count("gist create") != 1 || f.count("api --paginate gists") != 0 || r.GistURL != "https://gist.github.com/abc" {
 			t.Fatal(f.calls, r)
 		}
-		if f.count("api --paginate repos/projectbluefin/bluefin/issues?creator=me&state=all&per_page=100&since=") != 1 {
+		if f.count("api --paginate repos/projectbluefin/dakota/issues?creator=me&state=all&per_page=100&since=") != 1 {
 			t.Fatal(f.calls)
 		}
 	}
@@ -177,8 +183,8 @@ func TestGistNotFoundRecreatedOnce(t *testing.T) {
 
 func TestConfirm(t *testing.T) {
 	f := newFake()
-	r, err := Submit(context.Background(), f.exec, t.TempDir(), Draft{Mode: Confirm, Repo: "projectbluefin/bluefin", Body: "same here", IssueRef: "#3"})
-	if err != nil || f.count("gist") != 0 || f.count("issue comment --repo projectbluefin/bluefin --body-file - -- 3") != 1 || f.count("issue create") != 0 || r.IssueURL == "" {
+	r, err := Submit(context.Background(), f.exec, t.TempDir(), Draft{Mode: Confirm, Repo: "projectbluefin/dakota", Body: "same here", IssueRef: "#3"})
+	if err != nil || f.count("gist") != 0 || f.count("issue comment --repo projectbluefin/dakota --body-file - -- 3") != 1 || f.count("issue create") != 0 || r.IssueURL == "" {
 		t.Fatal(f.calls, r, err)
 	}
 }
@@ -186,12 +192,12 @@ func TestConfirm(t *testing.T) {
 func TestConfirmUncertainFoundComment(t *testing.T) {
 	f, dir := newFake(), t.TempDir()
 	f.fail["issue comment"] = true
-	d := Draft{Mode: Confirm, Repo: "projectbluefin/bluefin", Body: "x", IssueRef: "https://github.com/projectbluefin/bluefin/issues/3"}
+	d := Draft{Mode: Confirm, Repo: "projectbluefin/dakota", Body: "x", IssueRef: "https://github.com/projectbluefin/dakota/issues/3"}
 	Submit(context.Background(), f.exec, dir, d)
 	p, _ := Pending(dir)
-	f.out["api comments"] = "https://github.com/projectbluefin/bluefin/issues/3#issuecomment-5\n"
+	f.out["api comments"] = "https://github.com/projectbluefin/dakota/issues/3#issuecomment-5\n"
 	r, err := Resume(context.Background(), f.exec, dir, p[0].ReportID)
-	if err != nil || f.count("issue comment") != 1 || !strings.HasSuffix(r.IssueURL, "-5") || f.count("api --paginate repos/projectbluefin/bluefin/issues/3/comments?") != 1 {
+	if err != nil || f.count("issue comment") != 1 || !strings.HasSuffix(r.IssueURL, "-5") || f.count("api --paginate repos/projectbluefin/dakota/issues/3/comments?") != 1 {
 		t.Fatal(err, f.calls, r)
 	}
 }
@@ -217,13 +223,13 @@ func TestResumeNotSignedIn(t *testing.T) {
 }
 
 func TestIssueRef(t *testing.T) {
-	const repo = "projectbluefin/bluefin"
-	for _, ok := range []string{"12", "#12", "https://github.com/projectbluefin/bluefin/issues/12", "https://github.com/ProjectBluefin/Bluefin/issues/12#issuecomment-1"} {
+	const repo = "projectbluefin/dakota"
+	for _, ok := range []string{"12", "#12", "https://github.com/projectbluefin/dakota/issues/12", "https://github.com/ProjectBluefin/Dakota/issues/12#issuecomment-1"} {
 		if n, err := ParseIssueRef(repo, ok); n != 12 || err != nil {
 			t.Error(ok, n, err)
 		}
 	}
-	for _, bad := range []string{"--web", "-1", "0", "#", "", "abc", "12 --web", "https://github.com/evil/repo/issues/12", "https://github.com/projectbluefin/bluefin-lts/issues/12", "https://github.com/projectbluefin/bluefin/pull/12"} {
+	for _, bad := range []string{"--web", "-1", "0", "#", "", "abc", "12 --web", "https://github.com/evil/repo/issues/12", "https://github.com/projectbluefin/utah/issues/12", "https://github.com/projectbluefin/dakota/pull/12"} {
 		f := newFake()
 		if _, err := Submit(context.Background(), f.exec, t.TempDir(), Draft{Mode: Confirm, Repo: repo, Body: "x", IssueRef: bad}); err == nil || len(f.calls) != 0 {
 			t.Error(bad, err, f.calls)

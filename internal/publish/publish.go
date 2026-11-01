@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,7 +76,8 @@ type Saved struct {
 
 var ErrNotSignedIn = errors.New("gh is not signed in; run `gh auth login`")
 
-var Repos = []string{"projectbluefin/bluefin", "projectbluefin/bluefin-lts", "projectbluefin/dakota", "projectbluefin/common"}
+// Repos are the image repos that accept reports. A machine reports only to the repo of the image it runs.
+var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah"}
 
 func RunGH(ctx context.Context, stdin []byte, args ...string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
@@ -155,16 +157,14 @@ func Discard(stateDir, reportID string) error {
 	return os.RemoveAll(filepath.Join(stateDir, reportID))
 }
 
+// Route returns the repo for the running image's IMAGE_ID, or "" when the image has no report repo.
 func Route(imageID string) string {
-	switch {
-	case strings.HasPrefix(imageID, "bluefin-lts"):
-		return "projectbluefin/bluefin-lts"
-	case strings.HasPrefix(imageID, "bluefin"):
-		return "projectbluefin/bluefin"
-	case strings.HasPrefix(imageID, "dakota"):
-		return "projectbluefin/dakota"
+	for _, r := range Repos {
+		if name := strings.TrimPrefix(r, "projectbluefin/"); imageID == name || strings.HasPrefix(imageID, name+"-") {
+			return r
+		}
 	}
-	return "projectbluefin/common"
+	return ""
 }
 
 // ParseIssueRef accepts only "N", "#N" or https://github.com/<repo>/issues/N[#...].
@@ -183,8 +183,8 @@ func ParseIssueRef(repo, ref string) (int, error) {
 }
 
 func Submit(ctx context.Context, gh Exec, stateDir string, d Draft) (Result, error) {
-	if !strings.HasPrefix(d.Repo, "projectbluefin/") || strings.Count(d.Repo, "/") != 1 {
-		return Result{}, fmt.Errorf("refusing to publish to %q: not a projectbluefin repo", d.Repo)
+	if !slices.Contains(Repos, d.Repo) {
+		return Result{}, fmt.Errorf("refusing to publish to %q: not an image repo that accepts reports", d.Repo)
 	}
 	if d.Mode == Confirm {
 		n, err := ParseIssueRef(d.Repo, d.IssueRef)
