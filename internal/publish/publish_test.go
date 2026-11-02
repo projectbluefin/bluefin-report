@@ -1003,7 +1003,7 @@ func TestScreenshotLimits(t *testing.T) {
 func TestUnfinishedDraftIsNeverPublished(t *testing.T) {
 	dir := t.TempDir()
 	d := Draft{ReportID: "r1", Repo: "projectbluefin/dakota", Title: "T", Body: "half", Steps: "s"}
-	if err := SaveUnfinished(dir, d); err != nil {
+	if _, err := SaveUnfinished(dir, d); err != nil {
 		t.Fatal(err)
 	}
 	f := &fake{}
@@ -1030,10 +1030,44 @@ func TestSaveUnfinishedKeepsReviewedReport(t *testing.T) {
 	if err := save(dir, s); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveUnfinished(dir, Draft{ReportID: "r2", Repo: "projectbluefin/dakota", Body: "x"}); err == nil {
+	if _, err := SaveUnfinished(dir, Draft{ReportID: "r2", Repo: "projectbluefin/dakota", Body: "x"}); err == nil {
 		t.Fatal("SaveUnfinished overwrote a reviewed report")
 	}
-	if err := SaveUnfinished(dir, Draft{ReportID: "../x"}); err == nil {
+	if _, err := SaveUnfinished(dir, Draft{ReportID: "../x"}); err == nil {
 		t.Fatal("SaveUnfinished accepted a bad id")
+	}
+}
+
+func TestSaveUnfinishedKeepsEarlierScreenshot(t *testing.T) {
+	dir := t.TempDir()
+	first := shots(t, 1, ".png", 10)[0]
+	d := Draft{ReportID: "r3", Repo: "projectbluefin/dakota", Screenshots: []string{first}}
+	saved, err := SaveUnfinished(dir, d)
+	if err != nil || len(saved) != 1 {
+		t.Fatalf("saved = %v, %v", saved, err)
+	}
+	kept, err := os.ReadFile(saved[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(t.TempDir(), filepath.Base(first)) // same upload name, other picture
+	var b bytes.Buffer
+	png.Encode(&b, image.NewGray(image.Rect(0, 0, 2, 2)))
+	if err := os.WriteFile(second, b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.Screenshots = []string{saved[0], second}
+	again, err := SaveUnfinished(dir, d)
+	if err != nil || len(again) != 2 || again[0] != saved[0] || again[1] == again[0] {
+		t.Fatalf("again = %v, %v", again, err)
+	}
+	if got, _ := os.ReadFile(again[0]); !bytes.Equal(got, kept) {
+		t.Fatal("re-saving overwrote the kept screenshot copy")
+	}
+	if err := os.Remove(again[0]); err != nil { // e.g. the draft was discarded meanwhile
+		t.Fatal(err)
+	}
+	if last, err := SaveUnfinished(dir, Draft{ReportID: "r3", Screenshots: again}); err != nil || !slices.Equal(last, again[1:]) {
+		t.Fatalf("missing copy kept: %v, %v", last, err)
 	}
 }

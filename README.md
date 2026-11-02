@@ -87,8 +87,13 @@ When Overview shows a problem, Get Help Fixing This copies a short summary
   issue comment (Confirm: on the one "Same problem here." comment, which also names
   your report, attached to that issue as `systemd-report-<reportID>.json`) and are
   copied into the draft until published.
-- Raw snapshots stay in memory. Drafts keep only the reviewed payload under
-  `$XDG_STATE_HOME/bluefin-report/drafts/` (mode 0700/0600). Discarding a
+- Raw snapshots stay in memory. Drafts are kept under
+  `$XDG_STATE_HOME/bluefin-report/drafts/` (mode 0700/0600): a reviewed draft keeps
+  the reviewed payload; an unfinished one (saved with Ctrl+S, or automatically when
+  the window closes) keeps the unreviewed title, description, steps, queue, area and
+  screenshot copies, but no system report. Resume reopens an unfinished draft in
+  Compose; it must be reviewed before it can be published. `--dry-run` never saves
+  unfinished drafts. Discarding a
   draft can be undone from its toast; its files are deleted only when the toast
   goes away (or the window closes). It never deletes anything already on GitHub.
   The window size is kept in `$XDG_STATE_HOME/bluefin-report/window.json` (not under `--dry-run`).

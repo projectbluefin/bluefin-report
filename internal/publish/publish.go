@@ -104,15 +104,16 @@ func screenshotData(p string) ([]byte, string, error) {
 
 func screenshotDestination(dir, name string, i int, previous []string) string {
 	dst := filepath.Join(dir, name)
-	if slices.Contains(previous, dst) {
-		dst = filepath.Join(dir, fmt.Sprintf("%d-%s", i, name))
+	for n := i; slices.Contains(previous, dst); n++ {
+		dst = filepath.Join(dir, fmt.Sprintf("%d-%s", n, name))
 	}
 	return dst
 }
 
 // copyScreenshots re-encodes the files into dir (0600) so no EXIF/text metadata survives
 // and a resume survives the originals moving. Undecodable files are rejected.
-func copyScreenshots(dir string, paths []string) ([]string, error) {
+// Copies never overwrite a path in previous.
+func copyScreenshots(dir string, paths, previous []string) ([]string, error) {
 	if len(paths) == 0 {
 		return nil, nil
 	}
@@ -125,7 +126,7 @@ func copyScreenshots(dir string, paths []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		dst := screenshotDestination(dir, name, i, out)
+		dst := screenshotDestination(dir, name, i, append(slices.Clip(previous), out...))
 		if err := os.WriteFile(dst, data, 0o600); err != nil {
 			return nil, err
 		}
@@ -300,34 +301,36 @@ func SignIn(ctx context.Context, gh StreamExec, onCode func(code, url string)) e
 var ErrUnfinished = errors.New("this report was saved unfinished. Open it from Drafts to keep writing")
 
 // SaveUnfinished stores d as an Unfinished draft under d.ReportID, replacing an earlier save of
-// the same report. It never touches GitHub and refuses to overwrite a report that was reviewed.
-func SaveUnfinished(stateDir string, d Draft) error {
+// the same report, and returns the saved screenshot copies. It never touches GitHub and refuses
+// to overwrite a report that was reviewed.
+func SaveUnfinished(stateDir string, d Draft) ([]string, error) {
 	if d.ReportID == "" || strings.ContainsAny(d.ReportID, `/\.`) {
-		return fmt.Errorf("bad report id %q", d.ReportID)
+		return nil, fmt.Errorf("bad report id %q", d.ReportID)
 	}
 	dir := filepath.Join(stateDir, d.ReportID)
 	s, err := load(filepath.Join(dir, "state.json"))
 	switch {
 	case err == nil && s.Stage != Unfinished:
-		return fmt.Errorf("report %s is already being published", d.ReportID)
+		return nil, fmt.Errorf("report %s is already being published", d.ReportID)
 	case err != nil && !errors.Is(err, os.ErrNotExist):
-		return err
+		return nil, err
 	}
 	shotDir := filepath.Join(dir, "screenshots")
 	var keep, fresh []string
 	for _, p := range d.Screenshots {
-		if filepath.Dir(p) == shotDir {
-			keep = append(keep, p) // already a draft copy; do not lossy-encode it twice
-		} else {
+		switch {
+		case filepath.Dir(p) != shotDir:
 			fresh = append(fresh, p)
+		case fileExists(p): // a missing copy means the draft was discarded meanwhile; drop it
+			keep = append(keep, p) // already a draft copy; do not lossy-encode it twice
 		}
 	}
 	if err := checkScreenshots(fresh); err != nil {
-		return err
+		return nil, err
 	}
-	copies, err := copyScreenshots(shotDir, fresh)
+	copies, err := copyScreenshots(shotDir, fresh, keep)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	d.Screenshots = append(keep, copies...)
 	d.Attachment = nil
@@ -335,7 +338,15 @@ func SaveUnfinished(stateDir string, d Draft) error {
 	if s != nil {
 		started = s.StartedAt
 	}
-	return save(stateDir, &Saved{ReportID: d.ReportID, Stage: Unfinished, Draft: d, StartedAt: started})
+	if err := save(stateDir, &Saved{ReportID: d.ReportID, Stage: Unfinished, Draft: d, StartedAt: started}); err != nil {
+		return nil, err
+	}
+	return d.Screenshots, nil
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // Discard deletes a local draft; it never touches GitHub.
@@ -476,7 +487,7 @@ func Submit(ctx context.Context, gh Exec, stateDir string, d Draft) (Result, err
 			return Result{}, fmt.Errorf("issue #%s was opened by %s, but %s is signed in. Only the original reporter can add an update; use Confirm Existing Issue instead", d.IssueRef, author, account)
 		}
 	}
-	shots, err := copyScreenshots(filepath.Join(stateDir, d.ReportID, "screenshots"), d.Screenshots)
+	shots, err := copyScreenshots(filepath.Join(stateDir, d.ReportID, "screenshots"), d.Screenshots, nil)
 	if err != nil {
 		return Result{}, err
 	}

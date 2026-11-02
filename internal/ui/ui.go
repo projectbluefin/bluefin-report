@@ -132,6 +132,7 @@ type ui struct {
 	payload       privacy.Payload
 	reportID      string
 	draftID       string // the Unfinished draft this Compose form was saved to or restored from
+	detachedDraft string // draftID before its discard, restored if the discard is undone
 	publishing    bool
 	issueText     *gtk.TextBuffer
 	settingText   bool
@@ -290,6 +291,7 @@ func (u *ui) activate() {
 		t.ConnectButtonClicked(u.onUndo)
 		t.ConnectDismissed(u.onDismissed)
 		u.discarded[t.Ptr] = id
+		u.detachCompose(id)
 		log.Printf("ui: draft %s discarded, undo available", id)
 		u.refreshDrafts()
 		u.addToast(t)
