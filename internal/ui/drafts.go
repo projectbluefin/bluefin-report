@@ -49,6 +49,10 @@ func (u *ui) resume(id string) {
 	if u.publishing {
 		return
 	}
+	if s, ok := u.unfinished(id); ok {
+		u.restoreCompose(s.Draft, id)
+		return
+	}
 	log.Printf("ui: resuming %s", id)
 	u.run(id, func() { u.resume(id) }, func(ctx context.Context, gh publish.Exec) (publish.Result, error) {
 		return publish.Resume(ctx, gh, u.stateDir, id)
@@ -90,6 +94,7 @@ func (u *ui) run(id string, retry func(), step func(context.Context, publish.Exe
 				u.doneURL = res.IssueURL
 				u.donePage.SetDescription(res.IssueURL)
 				if id == u.reportID { // the Compose report, not some other resumed draft
+					u.discardSavedCompose()
 					u.resetCompose()
 				}
 				u.nav.ReplaceWithTags([]string{"overview", "done"}, 2) // Back from Done goes home, not to Publish
@@ -107,6 +112,110 @@ func (u *ui) resumable(id string) bool {
 		}
 	}
 	return false
+}
+
+// ---------- Unfinished reports ----------
+
+// composeDraft is the Compose form as an Unfinished draft; ok is false when there is nothing worth keeping.
+func composeDraft(id string, mode publish.Mode, repo, title, issueRef, desc, steps, queue, area string, shots []string) (d publish.Draft, ok bool) {
+	d = publish.Draft{
+		ReportID: id,
+		Mode:     mode,
+		Repo:     repo,
+		Body:     desc,
+		Steps:    steps,
+		IssueRef: strings.TrimSpace(issueRef),
+	}
+	if mode == publish.NewIssue {
+		d.Title, d.Queue, d.Area = strings.TrimSpace(title), queue, area
+		d.IssueRef = ""
+	}
+	d.Screenshots = slices.Clone(shots)
+	ok = strings.TrimSpace(d.Title) != "" || strings.TrimSpace(desc) != "" || strings.TrimSpace(steps) != "" || len(shots) > 0
+	return d, ok
+}
+
+// saveCompose keeps the unsent Compose form as an Unfinished draft. Dry runs never touch drafts.
+func (u *ui) saveCompose(explicit bool) {
+	if u.dryRun {
+		if explicit {
+			u.toast("Drafts are not saved in a dry run")
+		}
+		return
+	}
+	if u.publishing { // the report is already being written under its own ID
+		return
+	}
+	id := u.draftID
+	if id == "" {
+		id = publish.NewReportID()
+	}
+	d, ok := composeDraft(id, u.mode, u.repoName, u.title.GetText(), u.issueRef.GetText(),
+		bufText(u.desc), bufText(u.steps), queues[u.queue.GetSelected()], areas[u.area.GetSelected()], u.shots)
+	if !ok {
+		if explicit {
+			u.toast("Nothing to save yet")
+		}
+		return
+	}
+	if err := publish.SaveUnfinished(u.stateDir, d); err != nil {
+		log.Print("ui: save draft: ", err)
+		if explicit {
+			u.showError("Couldn't Save Draft", err.Error())
+		}
+		return
+	}
+	u.draftID = id
+	log.Printf("ui: saved unfinished report %s", id)
+	if explicit {
+		u.refreshDrafts()
+		u.toast("Draft saved")
+	}
+}
+
+// discardSavedCompose deletes the Unfinished draft of a Compose form that has just been published.
+func (u *ui) discardSavedCompose() {
+	if u.draftID == "" {
+		return
+	}
+	if err := publish.Discard(u.stateDir, u.draftID); err != nil {
+		log.Print("ui: discard saved draft: ", err)
+	}
+}
+
+// unfinished returns the saved Unfinished draft id, if there is one.
+func (u *ui) unfinished(id string) (publish.Saved, bool) {
+	ds, _ := publish.Pending(u.stateDir)
+	for _, s := range ds {
+		if s.ReportID == id && s.Stage == publish.Unfinished {
+			return s, true
+		}
+	}
+	return publish.Saved{}, false
+}
+
+// restoreCompose loads an Unfinished draft into Compose, first keeping whatever is being written there.
+func (u *ui) restoreCompose(d publish.Draft, id string) {
+	if u.draftID != id {
+		u.saveCompose(false)
+	}
+	u.resetCompose()
+	u.mode = d.Mode
+	u.title.SetText(d.Title)
+	u.issueRef.SetText(d.IssueRef)
+	u.desc.SetText(d.Body, -1)
+	u.steps.SetText(d.Steps, -1)
+	if i := slices.Index(queues, d.Queue); i >= 0 {
+		u.queue.SetSelected(uint32(i))
+	}
+	if i := slices.Index(areas, d.Area); i >= 0 {
+		u.area.SetSelected(uint32(i))
+	}
+	u.shots = slices.Clone(d.Screenshots)
+	u.syncShots()
+	u.draftID = id
+	log.Printf("ui: reopened unfinished report %s", id)
+	u.openCompose(d.Mode)
 }
 
 // ---------- Drafts ----------
@@ -178,7 +287,9 @@ func (u *ui) refreshDrafts() {
 	for _, s := range ds {
 		r := adw.NewActionRow()
 		t := s.Draft.Title
-		if t == "" {
+		if t == "" && s.Stage == publish.Unfinished && s.Draft.Mode == publish.NewIssue {
+			t = "Untitled report"
+		} else if t == "" {
 			t = "Comment on #" + s.Draft.IssueRef
 			if s.Draft.Mode == publish.Update {
 				t = "Update on #" + s.Draft.IssueRef
@@ -219,6 +330,8 @@ func (u *ui) refreshDrafts() {
 // stageText describes a draft's publish stage in plain words.
 func stageText(s publish.Saved) string {
 	switch {
+	case s.Stage == publish.Unfinished:
+		return "Not finished writing"
 	case s.Stage == publish.Reviewed:
 		return "Not published yet"
 	case s.IssueURL != "":

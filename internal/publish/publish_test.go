@@ -999,3 +999,41 @@ func TestScreenshotLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestUnfinishedDraftIsNeverPublished(t *testing.T) {
+	dir := t.TempDir()
+	d := Draft{ReportID: "r1", Repo: "projectbluefin/dakota", Title: "T", Body: "half", Steps: "s"}
+	if err := SaveUnfinished(dir, d); err != nil {
+		t.Fatal(err)
+	}
+	f := &fake{}
+	if _, err := Resume(context.Background(), f.exec, dir, "r1"); !errors.Is(err, ErrUnfinished) {
+		t.Fatalf("Resume err = %v, want ErrUnfinished", err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("gh was called: %v", f.calls)
+	}
+	if ds, _ := Pending(dir); len(ds) != 1 || ds[0].Draft.Steps != "s" {
+		t.Fatalf("pending = %+v", ds)
+	}
+	if err := Discard(dir, "r1"); err != nil {
+		t.Fatal(err)
+	}
+	if ds, _ := Pending(dir); len(ds) != 0 {
+		t.Fatalf("pending after discard = %+v", ds)
+	}
+}
+
+func TestSaveUnfinishedKeepsReviewedReport(t *testing.T) {
+	dir := t.TempDir()
+	s := &Saved{ReportID: "r2", Stage: Reviewed, Draft: Draft{ReportID: "r2", Repo: "projectbluefin/dakota"}}
+	if err := save(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveUnfinished(dir, Draft{ReportID: "r2", Repo: "projectbluefin/dakota", Body: "x"}); err == nil {
+		t.Fatal("SaveUnfinished overwrote a reviewed report")
+	}
+	if err := SaveUnfinished(dir, Draft{ReportID: "../x"}); err == nil {
+		t.Fatal("SaveUnfinished accepted a bad id")
+	}
+}

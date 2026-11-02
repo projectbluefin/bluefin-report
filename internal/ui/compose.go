@@ -239,6 +239,7 @@ func (u *ui) openCompose(m publish.Mode) {
 
 // resetCompose empties the Compose form to its defaults.
 func (u *ui) resetCompose() {
+	u.draftID = ""
 	u.title.SetText("")
 	u.issueRef.SetText("")
 	u.desc.SetText("", -1)

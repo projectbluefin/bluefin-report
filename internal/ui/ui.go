@@ -131,6 +131,7 @@ type ui struct {
 	// review
 	payload       privacy.Payload
 	reportID      string
+	draftID       string // the Unfinished draft this Compose form was saved to or restored from
 	publishing    bool
 	issueText     *gtk.TextBuffer
 	settingText   bool
@@ -209,6 +210,7 @@ func (u *ui) activate() {
 	}
 	u.win.ConnectCloseRequest(hold(func(gtk.Window) bool {
 		u.toasts.DismissAll() // runs pending discards: closing is not an Undo
+		u.saveCompose(false)
 		if !u.dryRun {
 			saveWindowState(&u.win.Window)
 		}
@@ -245,6 +247,7 @@ func (u *ui) activate() {
 	action("close", func() { u.win.Close() })
 	action("drafts", func() { u.refreshDrafts(); u.nav.PushByTag("drafts") })
 	action("shortcuts", u.shortcuts)
+	action("save-draft", func() { u.saveCompose(true) })
 	action("help", func() {
 		log.Print("ui: opening docs")
 		gtk.NewUriLauncher("https://docs.projectbluefin.io").Launch(&u.win.Window, nil, nil, 0)
@@ -305,6 +308,7 @@ func (u *ui) activate() {
 	u.app.SetAccelsForAction("win.close", []string{"<Control>w"})
 	u.app.SetAccelsForAction("win.shortcuts", []string{"<Control>question"})
 	u.app.SetAccelsForAction("win.help", []string{"F1"})
+	u.app.SetAccelsForAction("win.save-draft", []string{"<Control>s"})
 	u.app.SetAccelsForAction("win.advance", []string{"<Control>Return"})
 	u.app.SetAccelsForAction("app.quit", []string{"<Control>q"})
 
@@ -400,6 +404,7 @@ func (u *ui) shortcuts() {
 		{"Search metrics", "<Control>f"},
 		{"Back", "<Alt>Left Escape"},
 		{"Continue to Review or Publish", "<Control>Return"},
+		{"Save report as a draft", "<Control>s"},
 		{"Keyboard shortcuts", "<Control>question"},
 		{"Help", "F1"},
 		{"Close window", "<Control>w"},
