@@ -1,6 +1,6 @@
 {
-  "source_commit": "2394e4768d1678cb834769fde89ec8975d2c2dd0",
-  "binary_sha256": "32ac21c153242ae751191fa31d3b599cdc998d76572278522e52933bc12d61a8",
+  "source_commit": "53d1ce010363f3343cb4628415eade862a68ae52",
+  "binary_sha256": "33f8fcbdcb4eeaaa4dd26c5e23560e2a51507977558a901752835d1af4abbb29",
   "collector_sha256": "ddbe5bd5cf64a9a9e165319461d45158534fc732b966049a9a52bc8e4b4a93af",
   "telemetry": "Repository fixtures only (systemd-report telemetry and hardware/image identity); not host data. Application ran with --dry-run.",
   "viewport": {
@@ -21,8 +21,8 @@
     "internal/extras/testdata/root/usr/libexec/ublue-booted-image": "f5a9a3e077889bc374f06a9b52b51311582065651980558ac2eb5f2009f04db7"
   },
   "screenshots": {
-    "screenshot-overview.png": "803f60a542737259c8805dd164a2efe13f8b30cd2d7bf5feb00d0fac6498b6c8",
-    "screenshot-metrics.png": "cf87ed2a4b35dc56a68084d625f53d7b40dfd5bf5eb7cc54f36cd3e179792eb2",
-    "screenshot-review.png": "ac643bb4f382ae5001fa68bb15396b931114f5b49429a00db6fa599c71a0ae4a"
+    "screenshot-overview.png": "7250fc0f64a5949227261abcffc1601f35796c53a0a021f7e1fc1ad005ab9ad6",
+    "screenshot-metrics.png": "959c7994181a2d0601e1b3142992f5ea95d6a255b3f371b4f6913f5ef63012d8",
+    "screenshot-review.png": "dc21f3e0305e60054d3c1d09cb5159a524f25742731726a839db4939aa5f909a"
   }
 }
