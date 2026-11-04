@@ -83,10 +83,10 @@ When Overview shows a problem, Get Help Fixing This copies a short summary
   (an issue artifact): anyone who can see the issue can read it. Only if GitHub
   refuses artifacts does it fall back to a secret gist linked in an issue comment.
 - Screenshots (png, jpg, jpeg, gif; up to 10, 10 MiB each) are re-encoded to strip
-  metadata, but their visible content is not scrubbed and is public. They go in one
-  issue comment (Confirm: on the one "Same problem here." comment, which also names
-  your report, attached to that issue as `systemd-report-<reportID>.json`) and are
-  copied into the draft until published.
+  metadata, but their visible content is not scrubbed and is public. They are uploaded
+  to the issue as one artifact, `screenshots.md` (Confirm: `screenshots-<reportID>.md`,
+  next to your report `systemd-report-<reportID>.json`). Only if GitHub refuses artifacts
+  do they go in an issue comment instead. They are copied into the draft until published.
 - Raw snapshots stay in memory. Drafts keep only the reviewed payload under
   `$XDG_STATE_HOME/bluefin-report/drafts/` (mode 0700/0600). Discarding a
   draft can be undone from its toast; its files are deleted only when the toast

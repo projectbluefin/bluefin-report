@@ -260,7 +260,18 @@ func TestSubmitRejectsChangedScreenshotsOnRetry(t *testing.T) {
 				if _, err := Resume(context.Background(), f.exec, dir, d.ReportID); err != nil {
 					t.Fatal("explicit resume failed", err, f.calls)
 				}
-				if f.count("issue artifact create") != 2 || f.count("issue comment") != 1 {
+				comments := 0
+				if mode == Confirm {
+					comments = 1
+				}
+				shotUploads := 0
+				for _, c := range f.calls {
+					if strings.HasPrefix(c, "issue artifact create") && strings.Contains(c, "--name screenshots") {
+						shotUploads++
+					}
+				}
+				if f.count("issue artifact create") != 3 || shotUploads != 1 || f.count("issue comment") != comments ||
+					slices.ContainsFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "issue comment") && strings.Contains(c, "--attach") }) {
 					t.Fatal("resume duplicated or lost report uploads", f.calls)
 				}
 				if p, err := Pending(dir); err != nil || len(p) != 0 {
@@ -293,7 +304,8 @@ func TestSubmitRetriesUnchangedScreenshots(t *testing.T) {
 				}
 				f.fail["artifact create"] = false
 				r, err := Submit(context.Background(), f.exec, dir, d)
-				if err != nil || r.IssueURL == "" || f.count(create) != 1 || f.count("issue comment") != 1 {
+				if err != nil || r.IssueURL == "" || f.count(create) != 1 || f.count("issue comment") != 0 ||
+					f.count("issue artifact create 7 --body-file - --name screenshots.md -R projectbluefin/dakota --attach") != 1 {
 					t.Fatal("unchanged retry failed", r, err, f.calls)
 				}
 				// Published retries need neither originals nor the deleted draft copies.
@@ -885,14 +897,10 @@ func TestScreenshots(t *testing.T) {
 	if _, err := Submit(context.Background(), f.exec, dir, d); err != nil {
 		t.Fatal(err)
 	}
-	if f.count("issue comment") != 1 {
-		t.Fatal(f.calls)
-	}
-	c := f.calls[slices.IndexFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "issue comment") })]
 	copied := filepath.Join(dir, d.ReportID, "screenshots")
-	if c != "issue comment --repo projectbluefin/dakota --body-file - --attach "+filepath.Join(copied, "s.png")+" --attach "+filepath.Join(copied, "ss.png")+" -- 7" ||
-		f.in("issue comment") != "Screenshots\n<!-- bluefin-report-screenshots: "+d.ReportID+" -->" {
-		t.Fatalf("%q %q", c, f.in("issue comment"))
+	want := "issue artifact create 7 --body-file - --name screenshots.md -R projectbluefin/dakota --attach " + filepath.Join(copied, "s.png") + " --attach " + filepath.Join(copied, "ss.png")
+	if f.count(want) != 1 || f.in(want) != "Screenshots\n" || f.count("issue comment") != 0 || f.count(artifact) != 1 {
+		t.Fatal(f.calls)
 	}
 	if _, err := os.Stat(copied); !os.IsNotExist(err) {
 		t.Fatal("copied screenshots not removed when Published", err)
@@ -900,22 +908,23 @@ func TestScreenshots(t *testing.T) {
 
 	f = newFake()
 	d.ReportID, d.Screenshots = NewReportID(), nil
-	if _, err := Submit(context.Background(), f.exec, dir, d); err != nil || f.count("issue comment") != 0 {
+	if _, err := Submit(context.Background(), f.exec, dir, d); err != nil || f.count("issue comment") != 0 || f.count("issue artifact create 7 --body-file - --name screenshots") != 0 {
 		t.Fatal(err, f.calls)
 	}
 }
 
+// A screenshots artifact that already exists (crash after create) is found by name, not uploaded again.
 func TestScreenshotsResume(t *testing.T) {
 	f, dir := newFake(), t.TempDir()
 	d := draft
 	d.ReportID = NewReportID()
 	d.Screenshots = shots(t, 1, ".gif", 10)
-	f.fail["issue comment"] = true
+	f.fail["artifact create"] = true
 	if _, err := Submit(context.Background(), f.exec, dir, d); err == nil {
 		t.Fatal("want warning")
 	}
 	s, _ := load(filepath.Join(dir, d.ReportID, "state.json"))
-	if s.Stage != ShotsPending {
+	if s.Stage != LabelsDone {
 		t.Fatal(s.Stage)
 	}
 	os.Remove(d.Screenshots[0]) // originals may move; the draft copy is used
@@ -923,12 +932,39 @@ func TestScreenshotsResume(t *testing.T) {
 		t.Fatal("not copied 0600", err)
 	}
 	f = newFake()
-	f.out["api comments"] = "123\n" // marker comment exists: the crashed call went through
-	if _, err := Resume(context.Background(), f.exec, dir, d.ReportID); err != nil || f.count("issue comment") != 0 || f.count("api --paginate repos/projectbluefin/dakota/issues/7/comments") != 1 {
+	f.out["artifact list"] = "systemd-report.json\nscreenshots.md\n"
+	if _, err := Resume(context.Background(), f.exec, dir, d.ReportID); err != nil || f.count("issue artifact create") != 0 || f.count("issue comment") != 0 {
 		t.Fatal(err, f.calls)
 	}
 	if p, _ := Pending(dir); len(p) != 0 {
 		t.Fatal(p)
+	}
+}
+
+// When GitHub refuses artifacts, screenshots fall back to one comment on the issue.
+func TestScreenshotsArtifactsRefused(t *testing.T) {
+	for _, withReport := range []bool{true, false} {
+		f, dir := newFake(), t.TempDir()
+		d := draft
+		d.ReportID = NewReportID()
+		d.Screenshots = shots(t, 1, ".png", 10)
+		gists, creates := 1, 1
+		if !withReport { // screenshots only: refusal comes from the screenshots artifact, and no gist is needed
+			d.Attachment, gists = nil, 0
+		}
+		f.fail["artifact create"], f.errs = true, map[string]string{"artifact create": "HTTP 403"}
+		if _, err := Submit(context.Background(), f.exec, dir, d); err != nil {
+			t.Fatal(withReport, err, f.calls)
+		}
+		marker := "<!-- bluefin-report-screenshots: " + d.ReportID + " -->"
+		if f.count("issue artifact create") != creates || f.count("gist create") != gists ||
+			!slices.ContainsFunc(f.stdin, func(in string) bool { return in == "Screenshots\n"+marker }) ||
+			f.count("issue comment --repo projectbluefin/dakota --body-file - --attach ") != 1 {
+			t.Fatal(withReport, f.calls)
+		}
+		if p, _ := Pending(dir); len(p) != 0 {
+			t.Fatal(withReport, "not Published", p)
+		}
 	}
 }
 
@@ -938,7 +974,7 @@ func TestResumeRefusesDraftEditedOnDisk(t *testing.T) {
 		d := draft
 		d.ReportID = NewReportID()
 		d.Screenshots = shots(t, 1, ".gif", 10)
-		f.fail["issue comment"] = true // leave an unfinished draft
+		f.fail["artifact create"] = true // leave an unfinished draft
 		Submit(context.Background(), f.exec, dir, d)
 		state := filepath.Join(dir, d.ReportID, "state.json")
 		s, _ := load(state)
@@ -979,7 +1015,12 @@ func TestScreenshotsConfirm(t *testing.T) {
 	if _, err := Submit(context.Background(), f.exec, dir, d); err != nil {
 		t.Fatal(err)
 	}
-	if f.count("issue comment") != 1 || !strings.Contains(f.calls[len(f.calls)-1], "--attach ") || !strings.HasSuffix(f.calls[len(f.calls)-1], "s.jpg -- 3") ||
+	shots := slices.IndexFunc(f.calls, func(c string) bool {
+		return strings.HasPrefix(c, "issue artifact create 3 --body-file - --name screenshots-")
+	})
+	last := f.calls[len(f.calls)-1]
+	if shots < 0 || !strings.HasSuffix(f.calls[shots], "s.jpg") || f.stdin[shots] != "Screenshots\n" ||
+		f.count("issue comment") != 1 || strings.Contains(last, "--attach") || !strings.HasSuffix(last, "-- 3") ||
 		strings.Contains(f.in("issue comment"), "bluefin-report-screenshots") {
 		t.Fatal(f.calls)
 	}
