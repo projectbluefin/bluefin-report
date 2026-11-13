@@ -212,6 +212,7 @@ func (u *ui) loaded(s snapshot.Snapshot, err error) {
 		return
 	}
 	u.snap = &s
+	u.syncUserSession()
 	u.sum = s.Summary()
 	u.repoName = publish.Route(u.sum.ImageID)
 	for _, w := range u.reportActs {

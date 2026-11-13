@@ -89,6 +89,7 @@ func (u *ui) buildCompose() {
 	og.Add(&u.attach.Widget)
 	u.includeUser = adw.NewSwitchRow()
 	u.includeUser.SetTitle(i18n.G("Include User Session"))
+	u.syncUserSession()
 	og.Add(&u.includeUser.Widget)
 	u.queue = adw.NewComboRow()
 	u.queue.SetTitle(i18n.G("Who should look at it"))
@@ -211,6 +212,32 @@ func (u *ui) syncReview() {
 		u.issueRef.RemoveCssClass("error")
 	}
 	u.reviewBtn.SetSensitive(u.snap != nil && ok)
+}
+
+// userSessionRow says what "Include User Session" would attach from user, and
+// whether there is anything to attach at all.
+func userSessionRow(user snapshot.Report) (enabled bool, subtitle string) {
+	n := len(user.Metrics)
+	if n == 0 {
+		return false, i18n.G("No user-session data was collected")
+	}
+	return true, fmt.Sprintf(i18n.NG("Adds %d entry about your desktop session’s services",
+		"Adds %d entries about your desktop session’s services", n), n)
+}
+
+// syncUserSession turns "Include User Session" off and disables it when the
+// snapshot has no user-scope metrics, so it never claims to add what isn't there.
+func (u *ui) syncUserSession() {
+	var user snapshot.Report
+	if u.snap != nil {
+		user = u.snap.User
+	}
+	enabled, subtitle := userSessionRow(user)
+	u.includeUser.SetSubtitle(subtitle)
+	if !enabled {
+		u.includeUser.SetActive(false)
+	}
+	u.includeUser.SetSensitive(enabled)
 }
 
 // openCompose shows the form for m. A half-written report survives Back or
