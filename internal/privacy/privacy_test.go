@@ -389,6 +389,31 @@ func TestBuildUserScopeAndFilesAreOptIn(t *testing.T) {
 	}
 }
 
+// The Review preview shows only the start of the attachment, and the system report
+// alone fills it, so the opt-in user scope must come before the system scope (#85).
+func TestBuildPutsUserScopeBeforeSystem(t *testing.T) {
+	p, err := Build(sample(), Options{Username: "jorge", IncludeUser: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(p.JSON)
+	user, system := strings.Index(out, `"user"`), strings.Index(out, `"system"`)
+	if user < 0 || system < 0 || user > system {
+		t.Errorf("user scope at %d, system at %d; want user first", user, system)
+	}
+	var doc struct {
+		User *struct {
+			Metrics []json.RawMessage `json:"metrics"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(p.JSON, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.User == nil || len(doc.User.Metrics) != 1 {
+		t.Errorf("user scope = %+v, want its one metric attached", doc.User)
+	}
+}
+
 func TestBuildBudgetOmitsWholeFamiliesAndStaysValid(t *testing.T) {
 	full, _ := Build(sample(), Options{Username: "jorge"})
 	limit := len(full.JSON) - 50
