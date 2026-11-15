@@ -175,23 +175,28 @@ func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
 		s.Stage = done
 		return lines[len(lines)-1], nil
 	}
-	fresh, labeled := false, false // labels known only when the issue was created in this run
+	usesProw := strings.HasPrefix(d.Repo, "projectbluefin/")
+	fresh, labeled := false, !usesProw // labels known only when the issue was created in this run
 	if s.Stage == Reviewed {
 		body := issueBody(d)
 		// REST create: labels/type are silently dropped for non-maintainers instead of failing the create.
 		args := []string{"api", "--method", "POST", "repos/" + d.Repo + "/issues", "-f", "title=" + d.Title,
-			"-F", "body=@-", "-f", "labels[]=kind/bug"}
-		if d.Area != "" {
-			args = append(args, "-f", "labels[]=area/"+d.Area)
+			"-F", "body=@-"}
+		if usesProw {
+			args = append(args, "-f", "labels[]=kind/bug")
+			if d.Area != "" {
+				args = append(args, "-f", "labels[]=area/"+d.Area)
+			}
+			args = append(args, "-f", "type=Bug")
 		}
-		args = append(args, "-f", "type=Bug", "--jq", `.html_url + " " + ([.labels[].name]|join(","))`)
+		args = append(args, "--jq", `.html_url + " " + ([.labels[].name]|join(","))`)
 		done := IssueCreated
 		out, err := step(IssuePending, done, []byte(body), args...)
 		if err != nil {
 			return Result{}, err
 		}
 		url, labels, _ := strings.Cut(out, " ")
-		s.IssueURL, fresh, labeled = url, true, hasLabels(d, strings.Split(labels, ","))
+		s.IssueURL, fresh, labeled = url, true, !usesProw || hasLabels(d, strings.Split(labels, ","))
 		if err := save(dir, s); err != nil {
 			return Result{}, err
 		}
@@ -211,7 +216,7 @@ func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
 	}
 	freshShots := false // ShotsPending reached in this run: no comment can exist yet
 	if s.Stage == IssueCreated {
-		if !fresh {
+		if !fresh && usesProw {
 			out, errb, err := gh(ctx, nil, "issue", "view", n, "-R", d.Repo, "--json", "labels", "--jq", "[.labels[].name]|join(\",\")")
 			if err != nil {
 				return warn("reading labels", err, errb)

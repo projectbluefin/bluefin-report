@@ -27,7 +27,7 @@ func (u *ui) publish() {
 	d := publish.Draft{
 		ReportID: u.reportID,
 		Mode:     u.mode,
-		Repo:     u.repoName,
+		Repo:     u.selectedRepo(),
 		Body:     bufText(u.issueText),
 	}
 	if d.Mode == publish.NewIssue {
@@ -168,7 +168,7 @@ func (u *ui) saveCompose(explicit bool) {
 		id = publish.NewReportID()
 	}
 	d, ok := composeDraft(id, composeForm{
-		Mode: u.mode, Repo: u.repoName, Title: u.title.GetText(), IssueRef: u.issueRef.GetText(),
+		Mode: u.mode, Repo: u.selectedRepo(), Title: u.title.GetText(), IssueRef: u.issueRef.GetText(),
 		Desc: bufText(u.desc), Steps: bufText(u.steps),
 		Queue: queues[u.queue.GetSelected()], Area: areas[u.area.GetSelected()], Shots: u.shots,
 	})
@@ -252,6 +252,16 @@ func (u *ui) restoreCompose(d publish.Draft, id string) {
 	}
 	if i := slices.Index(areas, f.Area); i >= 0 {
 		u.area.SetSelected(uint32(i))
+	}
+	if f.Mode == publish.NewIssue {
+		idx := 0
+		for i, p := range projects {
+			if p.repo != "" && p.repo == f.Repo {
+				idx = i
+				break
+			}
+		}
+		u.repo.SetSelected(uint32(idx))
 	}
 	u.shots = f.Shots
 	u.syncShots()

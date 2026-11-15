@@ -46,6 +46,13 @@ var queues = []string{"", "3-clanker-queue", "3-human-queue"}
 
 var areas = []string{"", "desktop", "flatpak", "gaming", "hardware", "installer", "dx"}
 
+var projects = []struct{ name, repo string }{
+	{"Bluefin", ""}, // the running image's repository
+	{"ISO / Installer", "tuna-os/bootc-installer"},
+	{"Compass", "tuna-os/compass"},
+	{"Control Center", "projectbluefin/chairlift"},
+}
+
 // Version is set at release build time via -ldflags -X.
 var Version = "dev"
 
@@ -113,7 +120,7 @@ type ui struct {
 	// compose
 	mode        publish.Mode
 	composePage *adw.NavigationPage
-	repo        *adw.ActionRow // shows repoName; there is no choice: reports go to the running image's repo
+	repo        *adw.ComboRow
 	repoName    string
 	reportDesc  *gtk.Label
 	reportActs  []*gtk.Widget         // disabled until the snapshot names this image's repo
