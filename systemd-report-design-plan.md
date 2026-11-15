@@ -144,7 +144,7 @@ Rules:
 | Resources | `io.systemd.CGroup` | CGroup |
 | Logs | `io.systemd.Journal` | Journal (often permission-denied for users) |
 
-Beta 1's "Sleep/Crash", "Bootc/Update" and "Flatpak" profiles are **removed**: no source on this host provides that data. Add them when a source exists, not before. A profile whose sources are missing is shown disabled with the reason; it is never shown as "nothing found".
+Beta 1's "Sleep/Crash", "Bootc/Update" and "Flatpak" profiles are **removed** as systemd-report profiles: no source on this host provides that data (`io.systemd.Journal` stays unreachable, its socket is `root:systemd-journal`). They are covered instead by unprivileged opt-in sections in `internal/extras` (Kernel Problems in the Previous Boot, Desktop Warnings, Update and Boot Warnings, Network Warnings and Device State, Flatpak and Portal Warnings, Disks and Graphics) that run `journalctl` directly, since the system journal is readable through the wheel/adm ACL on `/var/log/journal`. Still no root, no polkit (§1). A profile whose sources are missing is shown disabled with the reason; it is never shown as "nothing found".
 
 ## 6. Privacy
 
@@ -172,7 +172,7 @@ Read `IMAGE_ID` from the Basic OS-release metrics. A machine reports only to the
 | `utah`, `utah-*` | `projectbluefin/utah` |
 | anything else | none: Report a Problem and Confirm Existing Issue are disabled, with the reason shown |
 
-The repo is shown, not chosen. `publish.Submit` accepts only these two repos and rejects anything else before any network call. One check, one place.
+The repo defaults to the running image's repo for Bluefin, with explicit options in New Issue for ISO / Installer (`tuna-os/bootc-installer`), Compass (`tuna-os/compass`), and Control Center (`projectbluefin/chairlift`). `publish.Submit` accepts only configured report destinations and rejects anything else before any network call. One check, one place.
 
 ### Transport
 Use `gh` (Homebrew) rather than a token store of our own. Beta 1 corrections:
@@ -182,7 +182,7 @@ Use `gh` (Homebrew) rather than a token store of our own. Beta 1 corrections:
 - Fallback only when artifacts are refused outright (HTTP 401/403/404/410/422, or a gh without the preview command): a **secret gist** (`gh gist create`, no `--public`; not listed on the profile, readable by anyone with the link) linked in one issue comment `Full report: <gist>` carrying the report-id marker. Transient failures stay pending for Resume.
 - Labels: create the issue through REST (`gh api --method POST repos/<repo>/issues`) with `kind/bug`, the optional `area/*` the reporter picked, and issue type `Bug`. REST silently drops labels and type for reporters without push access (GraphQL would fail the whole create), so when the returned labels lack them the app posts one `/kind bug` (and `/area …`) comment, which Prow accepts from anyone. `needs-triage` → `triage/accepted` stays with maintainers. The `<!-- hive-queue: … -->` marker stays in the body.
 - Before attaching on Resume, `gh issue artifact list N --json name` is checked for `systemd-report.json`; before the fallback comment, the issue's comments are checked for the report-id marker.
-- Screenshots: Submit checks ≤ 10 files, ≤ 10 MiB each, image/video extensions before any network call, then copies them into `<draft>/screenshots/` (0600). NewIssue posts one `gh issue comment N --body-file - --attach <file>…` with body `Screenshots` + `<!-- bluefin-report-screenshots: ID -->` from stage `ShotsPending` (Resume checks comments for that marker first); Confirm passes `--attach` on the confirmation comment. Copies are deleted when Published. Screenshots are not scrubbed; the consent text says so.
+- Screenshots: Submit checks ≤ 10 files, ≤ 10 MiB each, image extensions before any network call, then copies them into `<draft>/screenshots/` (0600). Right after the report artifact, they are uploaded as one Markdown issue artifact: `gh issue artifact create N --body-file - --name screenshots.md --attach <file>…` (Confirm/Update: `screenshots-<ID>.md`); gh appends each image to that document. Resume lists artifacts first, so an existing `screenshots.md` is never uploaded twice (a partial upload is kept as-is). `ShotsArtifact` in `state.json` records success. Only when artifacts are refused does NewIssue fall back to one `gh issue comment N --attach <file>…` with `<!-- bluefin-report-screenshots: ID -->` from stage `ShotsPending`, and Confirm to `--attach` on its confirmation comment. Copies are deleted when Published. Screenshots are not scrubbed; the consent text says so.
 - Issue URL comes from the REST response.
 
 ### Publication is not atomic — model it
@@ -198,8 +198,8 @@ stateDiagram-v2
     IssuePending --> IssueCreated: URL recorded
     IssuePending --> Uncertain: crash or timeout
     IssueCreated --> LabelsDone: kind/area ensured
-    LabelsDone --> Published: artifact attached (or none), no screenshots
-    LabelsDone --> ShotsPending: artifact attached, screenshots chosen
+    LabelsDone --> Published: report and screenshots artifacts attached (or none)
+    LabelsDone --> ShotsPending: screenshots artifact refused
     ShotsPending --> Published: screenshots comment posted
     LabelsDone --> GistPending: artifacts refused
     GistPending --> GistCreated: URL recorded
@@ -214,7 +214,7 @@ stateDiagram-v2
 
 - Each draft carries a random `report-id` written into an HTML comment in the issue body (and, on fallback, the gist description and link comment).
 - **Uncertain** is resolved by lookup, not by retrying, through consistent REST list endpoints rather than lagging search: the user's issues on the target repo by `creator` with the report-id marker, or, once the issue exists, the user's recent gists by description. Only if nothing is found is the write retried. Artifact and comment steps after the issue exists re-check before writing instead.
-- Confirm: stages LabelsDone (artifact, listed by its per-report name first) → GistPending/GistCreated on refusal → CommentPending (Resume checks comments for the report-id marker) → Published.
+- Confirm: stages LabelsDone (report and screenshots artifacts, each listed by its per-report name first) → GistPending/GistCreated on refusal → CommentPending (Resume checks comments for the report-id marker) → Published.
 
 ## 8. Stack and packaging
 
@@ -267,16 +267,16 @@ Bonedigger and `ujust report` are unchanged.
 
 ## 12. Scope against the original inspector prompt
 
-The project began from a [prompt](https://pastebin.com/raw/CyAf24V1) for a "systemd Inspector & Trust Center": a four-view `AdwNavigationSplitView` app with live telemetry, signing, fleet upload and admin tools. This plan deliberately builds a different product, the support-report journey of §3. A capability missing below is a scope choice, not a bug in the support-report flow; a focused audit fix does not imply building the inspector. Tracking issue: [#14](https://github.com/projectbluefin/bluefin-report/issues/14).
+The project began from a [prompt](https://pastebin.com/raw/CyAf24V1) for a "systemd Inspector & Trust Center": a four-view `AdwNavigationSplitView` app with live telemetry, signing, fleet upload and admin tools. This plan deliberately builds a different product, the support-report journey of §3. A capability missing below is a scope choice, not a bug in the support-report flow; a focused audit fix does not imply building the inspector. Decided in [#14](https://github.com/projectbluefin/bluefin-report/issues/14); the previously identified follow-ups are tracked in the linked issues.
 
-Status: **Kept** = shipped, possibly reshaped. **Follow-up** = belongs to the current design, needs its own issue. **Deferred** = roadmap, revisit when the stated condition holds. **Rejected** = out of scope for this product.
+Status: **Kept** = shipped, possibly reshaped. **Follow-up** = belongs to the current design, tracked in the linked issue. **Deferred** = roadmap, revisit when the stated condition holds. **Rejected** = out of scope for this product.
 
 | Prompt capability | Status | Where it stands |
 | :--- | :--- | :--- |
 | Static facts (OS, kernel, arch, image, CPU, GPU) | Kept | Overview "This System" group. The prompt's hostname, machine/boot ID and SMBIOS serials are not shown and are dropped from the attachment (§6). |
-| Per-fact Copy button, export | Follow-up | Metric values copy and the reviewed report exports (Journey C); copy on Overview fact rows is not built. |
+| Per-fact Copy button, export | Kept | Metric values and Overview fact rows copy ([#65](https://github.com/projectbluefin/bluefin-report/issues/65), #74); the reviewed report exports (Journey C). |
 | Raw metric browsing | Kept | Metrics page, both scopes, user rows prefixed `user:`. |
-| `describe` metadata in tooltips | Follow-up | `snapshot.Describe` parses it; no UI caller yet. Tooltips show only name and value. |
+| `describe` metadata in tooltips | Kept | `snapshot.Describe` parses it; `ui.metricTooltip` shows it on hover over each metrics row ([#64](https://github.com/projectbluefin/bluefin-report/issues/64); internal/ui/metrics.go). |
 | System/user scope toggle | Deferred | Both scopes are always collected (§5). A Metrics-page scope filter is a refinement, not a requirement. |
 | Dot-boundary match filtering | Deferred | `snapshot.Take` forwards matches; the UI filters by case-insensitive substring over rendered rows, which also finds values. |
 | Inspect and save the compiled JSON report | Kept | Review "Attachment" tab shows the scrubbed `generate` object; Export Report… saves it (§4, §6). |
@@ -287,5 +287,5 @@ Status: **Kept** = shipped, possibly reshaped. **Follow-up** = belongs to the cu
 | HTTPS/mTLS upload profiles (`--url`, `--cert`, `--key`, `--trust`) | Deferred | §1 non-goal for end users (fleet use, needs client certs). Possible later. |
 | `report.files` manager with Polkit | Rejected | §1: no root, no polkit policy. `io.systemd.Files.*` stays opt-in per entry (§6). |
 | Periodic reporting `.timer` control | Rejected | Enabling a system timer needs privilege (§1: no root) and serves fleets, not a user filing one bug. |
-| Companion tools: `systemd-analyze security`/`plot`/`blame`, `systemd-pcrlock`/`systemd-measure`, `systemd-cgtop`, `varlinkctl` | Rejected | Inspector features, not reporting. A single read-only diagnostic may still be proposed, in its own issue, as one more opt-in report extra (existing ones: boot errors, crashes, GNOME extensions, Flatpaks; see `internal/extras`). |
+| Companion tools: `systemd-analyze security`/`plot`/`blame`, `systemd-pcrlock`/`systemd-measure`, `systemd-cgtop`, `varlinkctl` | Rejected | Inspector features, not reporting. A single read-only diagnostic may still be proposed, in its own issue, as one more opt-in report extra (existing ones: boot errors, crashes, previous-boot kernel problems, desktop/update/network/portal warnings, disks and graphics, GNOME extensions, Flatpaks; see `internal/extras`). |
 | Four-view `AdwNavigationSplitView` | Rejected | §4: replaced by the `AdwNavigationView` journey. |

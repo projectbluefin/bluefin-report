@@ -47,7 +47,7 @@ func TestCopyScreenshotsStripsMetadata(t *testing.T) {
 		}
 	}
 
-	out, err := copyScreenshots(dst, []string{pp, jp})
+	out, err := copyScreenshots(dst, []string{pp, jp}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestCopyScreenshotsStripsMetadata(t *testing.T) {
 			t.Errorf("%s does not decode: %v", out[i], err)
 		}
 	}
-	if _, err := copyScreenshots(dst, []string{bad}); err == nil {
+	if _, err := copyScreenshots(dst, []string{bad}, nil); err == nil {
 		t.Error("undecodable file accepted")
 	}
 }

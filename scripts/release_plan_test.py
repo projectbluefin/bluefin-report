@@ -65,7 +65,7 @@ class ReleasePlanTests(unittest.TestCase):
         self.assertEqual((result["run"], result["publish"]), ("false", "false"))
 
     def test_runtime_and_release_inputs_are_relevant_but_images_are_not(self):
-        for path in ("cmd/report/main.go", "internal/ui/ui.go", "data/icons/app.svg", "go.mod", "go.sum", "scripts/next-version.sh", ".goreleaser.yaml", ".github/workflows/release.yml"):
+        for path in ("cmd/report/main.go", "internal/ui/ui.go", "data/icons/app.svg", "po/de.po", "go.mod", "go.sum", "scripts/next-version.sh", ".goreleaser.yaml", ".github/workflows/release.yml"):
             with self.subTest(path=path):
                 self.assertTrue(release_plan.relevant(path))
         for path in ("README.md", "CONTRIBUTING.md", "data/screenshots/review.png", "data/screenshots/provenance.json"):

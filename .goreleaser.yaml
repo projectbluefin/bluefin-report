@@ -3,6 +3,11 @@ version: 2
 
 project_name: bluefin-report
 
+# Compiled translations and the desktop file and metainfo with them merged in.
+before:
+  hooks:
+    - make mo data LOCALEDIR=locale
+
 builds:
   - id: bluefin-report
     env:
@@ -29,10 +34,16 @@ archives:
       - README.md
       - LICENSE
       - data/bluefin-report-wrapper.sh
-      - data/io.projectbluefin.Report.desktop
-      - data/io.projectbluefin.Report.metainfo.xml
+      - src: build/data/io.projectbluefin.Report.desktop
+        dst: data
+        strip_parent: true
+      - src: build/data/io.projectbluefin.Report.metainfo.xml
+        dst: data
+        strip_parent: true
       - data/icons/**/*
       - data/screenshots/*
+      # The app looks for catalogs in locale/ beside its binary.
+      - locale/**/*
 
 checksum:
   name_template: "checksums.txt"

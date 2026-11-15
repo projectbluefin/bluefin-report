@@ -9,7 +9,9 @@
 ## Build and test
 
 Needs Go (version in `go.mod`), Make, and a CGO toolchain for the race detector.
-GTK 4 and libadwaita are runtime dependencies only.
+GTK 4 and libadwaita are runtime dependencies only. Translation targets need GNU
+gettext: `make mo data` (run by GoReleaser for every release archive) works with any
+recent version, `make pot` needs 0.25 or newer. See [Translations](README.md#translations).
 
 ```sh
 make build

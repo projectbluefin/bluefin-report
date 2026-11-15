@@ -2,3 +2,5 @@ codeberg.org/puregotk/purego v0.0.0-20260224095105-2513c838cb80 h1:y5ZxMLLOjl4xc
 codeberg.org/puregotk/purego v0.0.0-20260224095105-2513c838cb80/go.mod h1:hVVM4ddvYRlc3IcK3CXJPlMwd/vaLj7gdDBZ6oPgT8w=
 codeberg.org/puregotk/puregotk v0.0.0-20261003054014-d92056b0aa41 h1:IC30NjXeeBj+VLQ9fYa/G4yr63KPA9yuhOXoFmCMYpI=
 codeberg.org/puregotk/puregotk v0.0.0-20261003054014-d92056b0aa41/go.mod h1:SOzlGinx8V9Axu1reSh4uafhrtItio44+9r2b+1fUnQ=
+github.com/snapcore/go-gettext v0.0.0-20230721153050-9082cdc2db05 h1:U4jvhafXCGpGStogwoYEgtd4K9Knmu2KAB47VVNAWvg=
+github.com/snapcore/go-gettext v0.0.0-20230721153050-9082cdc2db05/go.mod h1:1ueMvqqhxoixAuIFQdiz8E23ng0DJPGrb+EhnjuqpXc=

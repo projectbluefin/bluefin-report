@@ -108,6 +108,24 @@ func TestRoute(t *testing.T) {
 			t.Errorf("%s not rejected before network", repo)
 		}
 	}
+	for _, repo := range []string{"tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift"} {
+		f := newFake()
+		f.out["api --method POST repos/"+repo+"/issues"] = "https://github.com/" + repo + "/issues/1\n"
+		f.out["issue artifact create 1 --body-file - --name systemd-report.json -R "+repo] = "\n"
+		d := Draft{Repo: repo, Title: "t", Body: "b", Attachment: []byte("{}"), Area: "installer"}
+		if _, err := Submit(context.Background(), f.exec, t.TempDir(), d); err != nil {
+			t.Errorf("Submit to allowed repo %s failed: %v", repo, err)
+		}
+		if strings.HasPrefix(repo, "tuna-os/") {
+			createCall := f.calls[1] // call 0 is auth status, 1 is issue create
+			if strings.Contains(createCall, "labels[]") || strings.Contains(createCall, "type=Bug") {
+				t.Errorf("non-Prow repo %s received Prow labels in create call: %s", repo, createCall)
+			}
+			if f.count("issue comment") != 0 {
+				t.Errorf("non-Prow repo %s posted Prow slash-command comment", repo)
+			}
+		}
+	}
 }
 
 const artifact = "issue artifact create 7 --body-file - --name systemd-report.json -R projectbluefin/dakota"
@@ -260,7 +278,18 @@ func TestSubmitRejectsChangedScreenshotsOnRetry(t *testing.T) {
 				if _, err := Resume(context.Background(), f.exec, dir, d.ReportID); err != nil {
 					t.Fatal("explicit resume failed", err, f.calls)
 				}
-				if f.count("issue artifact create") != 2 || f.count("issue comment") != 1 {
+				comments := 0
+				if mode == Confirm {
+					comments = 1
+				}
+				shotUploads := 0
+				for _, c := range f.calls {
+					if strings.HasPrefix(c, "issue artifact create") && strings.Contains(c, "--name screenshots") {
+						shotUploads++
+					}
+				}
+				if f.count("issue artifact create") != 3 || shotUploads != 1 || f.count("issue comment") != comments ||
+					slices.ContainsFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "issue comment") && strings.Contains(c, "--attach") }) {
 					t.Fatal("resume duplicated or lost report uploads", f.calls)
 				}
 				if p, err := Pending(dir); err != nil || len(p) != 0 {
@@ -293,7 +322,8 @@ func TestSubmitRetriesUnchangedScreenshots(t *testing.T) {
 				}
 				f.fail["artifact create"] = false
 				r, err := Submit(context.Background(), f.exec, dir, d)
-				if err != nil || r.IssueURL == "" || f.count(create) != 1 || f.count("issue comment") != 1 {
+				if err != nil || r.IssueURL == "" || f.count(create) != 1 || f.count("issue comment") != 0 ||
+					f.count("issue artifact create 7 --body-file - --name screenshots.md -R projectbluefin/dakota --attach") != 1 {
 					t.Fatal("unchanged retry failed", r, err, f.calls)
 				}
 				// Published retries need neither originals nor the deleted draft copies.
@@ -885,14 +915,10 @@ func TestScreenshots(t *testing.T) {
 	if _, err := Submit(context.Background(), f.exec, dir, d); err != nil {
 		t.Fatal(err)
 	}
-	if f.count("issue comment") != 1 {
-		t.Fatal(f.calls)
-	}
-	c := f.calls[slices.IndexFunc(f.calls, func(c string) bool { return strings.HasPrefix(c, "issue comment") })]
 	copied := filepath.Join(dir, d.ReportID, "screenshots")
-	if c != "issue comment --repo projectbluefin/dakota --body-file - --attach "+filepath.Join(copied, "s.png")+" --attach "+filepath.Join(copied, "ss.png")+" -- 7" ||
-		f.in("issue comment") != "Screenshots\n<!-- bluefin-report-screenshots: "+d.ReportID+" -->" {
-		t.Fatalf("%q %q", c, f.in("issue comment"))
+	want := "issue artifact create 7 --body-file - --name screenshots.md -R projectbluefin/dakota --attach " + filepath.Join(copied, "s.png") + " --attach " + filepath.Join(copied, "ss.png")
+	if f.count(want) != 1 || f.in(want) != "Screenshots\n" || f.count("issue comment") != 0 || f.count(artifact) != 1 {
+		t.Fatal(f.calls)
 	}
 	if _, err := os.Stat(copied); !os.IsNotExist(err) {
 		t.Fatal("copied screenshots not removed when Published", err)
@@ -900,22 +926,23 @@ func TestScreenshots(t *testing.T) {
 
 	f = newFake()
 	d.ReportID, d.Screenshots = NewReportID(), nil
-	if _, err := Submit(context.Background(), f.exec, dir, d); err != nil || f.count("issue comment") != 0 {
+	if _, err := Submit(context.Background(), f.exec, dir, d); err != nil || f.count("issue comment") != 0 || f.count("issue artifact create 7 --body-file - --name screenshots") != 0 {
 		t.Fatal(err, f.calls)
 	}
 }
 
+// A screenshots artifact that already exists (crash after create) is found by name, not uploaded again.
 func TestScreenshotsResume(t *testing.T) {
 	f, dir := newFake(), t.TempDir()
 	d := draft
 	d.ReportID = NewReportID()
 	d.Screenshots = shots(t, 1, ".gif", 10)
-	f.fail["issue comment"] = true
+	f.fail["artifact create"] = true
 	if _, err := Submit(context.Background(), f.exec, dir, d); err == nil {
 		t.Fatal("want warning")
 	}
 	s, _ := load(filepath.Join(dir, d.ReportID, "state.json"))
-	if s.Stage != ShotsPending {
+	if s.Stage != LabelsDone {
 		t.Fatal(s.Stage)
 	}
 	os.Remove(d.Screenshots[0]) // originals may move; the draft copy is used
@@ -923,12 +950,39 @@ func TestScreenshotsResume(t *testing.T) {
 		t.Fatal("not copied 0600", err)
 	}
 	f = newFake()
-	f.out["api comments"] = "123\n" // marker comment exists: the crashed call went through
-	if _, err := Resume(context.Background(), f.exec, dir, d.ReportID); err != nil || f.count("issue comment") != 0 || f.count("api --paginate repos/projectbluefin/dakota/issues/7/comments") != 1 {
+	f.out["artifact list"] = "systemd-report.json\nscreenshots.md\n"
+	if _, err := Resume(context.Background(), f.exec, dir, d.ReportID); err != nil || f.count("issue artifact create") != 0 || f.count("issue comment") != 0 {
 		t.Fatal(err, f.calls)
 	}
 	if p, _ := Pending(dir); len(p) != 0 {
 		t.Fatal(p)
+	}
+}
+
+// When GitHub refuses artifacts, screenshots fall back to one comment on the issue.
+func TestScreenshotsArtifactsRefused(t *testing.T) {
+	for _, withReport := range []bool{true, false} {
+		f, dir := newFake(), t.TempDir()
+		d := draft
+		d.ReportID = NewReportID()
+		d.Screenshots = shots(t, 1, ".png", 10)
+		gists, creates := 1, 1
+		if !withReport { // screenshots only: refusal comes from the screenshots artifact, and no gist is needed
+			d.Attachment, gists = nil, 0
+		}
+		f.fail["artifact create"], f.errs = true, map[string]string{"artifact create": "HTTP 403"}
+		if _, err := Submit(context.Background(), f.exec, dir, d); err != nil {
+			t.Fatal(withReport, err, f.calls)
+		}
+		marker := "<!-- bluefin-report-screenshots: " + d.ReportID + " -->"
+		if f.count("issue artifact create") != creates || f.count("gist create") != gists ||
+			!slices.ContainsFunc(f.stdin, func(in string) bool { return in == "Screenshots\n"+marker }) ||
+			f.count("issue comment --repo projectbluefin/dakota --body-file - --attach ") != 1 {
+			t.Fatal(withReport, f.calls)
+		}
+		if p, _ := Pending(dir); len(p) != 0 {
+			t.Fatal(withReport, "not Published", p)
+		}
 	}
 }
 
@@ -938,7 +992,7 @@ func TestResumeRefusesDraftEditedOnDisk(t *testing.T) {
 		d := draft
 		d.ReportID = NewReportID()
 		d.Screenshots = shots(t, 1, ".gif", 10)
-		f.fail["issue comment"] = true // leave an unfinished draft
+		f.fail["artifact create"] = true // leave an unfinished draft
 		Submit(context.Background(), f.exec, dir, d)
 		state := filepath.Join(dir, d.ReportID, "state.json")
 		s, _ := load(state)
@@ -979,7 +1033,12 @@ func TestScreenshotsConfirm(t *testing.T) {
 	if _, err := Submit(context.Background(), f.exec, dir, d); err != nil {
 		t.Fatal(err)
 	}
-	if f.count("issue comment") != 1 || !strings.Contains(f.calls[len(f.calls)-1], "--attach ") || !strings.HasSuffix(f.calls[len(f.calls)-1], "s.jpg -- 3") ||
+	shots := slices.IndexFunc(f.calls, func(c string) bool {
+		return strings.HasPrefix(c, "issue artifact create 3 --body-file - --name screenshots-")
+	})
+	last := f.calls[len(f.calls)-1]
+	if shots < 0 || !strings.HasSuffix(f.calls[shots], "s.jpg") || f.stdin[shots] != "Screenshots\n" ||
+		f.count("issue comment") != 1 || strings.Contains(last, "--attach") || !strings.HasSuffix(last, "-- 3") ||
 		strings.Contains(f.in("issue comment"), "bluefin-report-screenshots") {
 		t.Fatal(f.calls)
 	}
@@ -997,5 +1056,77 @@ func TestScreenshotLimits(t *testing.T) {
 		if _, err := Submit(context.Background(), f.exec, t.TempDir(), d); err == nil || len(f.calls) != 0 {
 			t.Errorf("%s: err=%v calls=%v", name, err, f.calls)
 		}
+	}
+}
+
+func TestUnfinishedDraftIsNeverPublished(t *testing.T) {
+	dir := t.TempDir()
+	d := Draft{ReportID: "r1", Repo: "projectbluefin/dakota", Title: "T", Body: "half", Steps: "s"}
+	if _, err := SaveUnfinished(dir, d); err != nil {
+		t.Fatal(err)
+	}
+	f := &fake{}
+	if _, err := Resume(context.Background(), f.exec, dir, "r1"); !errors.Is(err, ErrUnfinished) {
+		t.Fatalf("Resume err = %v, want ErrUnfinished", err)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("gh was called: %v", f.calls)
+	}
+	if ds, _ := Pending(dir); len(ds) != 1 || ds[0].Draft.Steps != "s" {
+		t.Fatalf("pending = %+v", ds)
+	}
+	if err := Discard(dir, "r1"); err != nil {
+		t.Fatal(err)
+	}
+	if ds, _ := Pending(dir); len(ds) != 0 {
+		t.Fatalf("pending after discard = %+v", ds)
+	}
+}
+
+func TestSaveUnfinishedKeepsReviewedReport(t *testing.T) {
+	dir := t.TempDir()
+	s := &Saved{ReportID: "r2", Stage: Reviewed, Draft: Draft{ReportID: "r2", Repo: "projectbluefin/dakota"}}
+	if err := save(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SaveUnfinished(dir, Draft{ReportID: "r2", Repo: "projectbluefin/dakota", Body: "x"}); err == nil {
+		t.Fatal("SaveUnfinished overwrote a reviewed report")
+	}
+	if _, err := SaveUnfinished(dir, Draft{ReportID: "../x"}); err == nil {
+		t.Fatal("SaveUnfinished accepted a bad id")
+	}
+}
+
+func TestSaveUnfinishedKeepsEarlierScreenshot(t *testing.T) {
+	dir := t.TempDir()
+	first := shots(t, 1, ".png", 10)[0]
+	d := Draft{ReportID: "r3", Repo: "projectbluefin/dakota", Screenshots: []string{first}}
+	saved, err := SaveUnfinished(dir, d)
+	if err != nil || len(saved) != 1 {
+		t.Fatalf("saved = %v, %v", saved, err)
+	}
+	kept, err := os.ReadFile(saved[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(t.TempDir(), filepath.Base(first)) // same upload name, other picture
+	var b bytes.Buffer
+	png.Encode(&b, image.NewGray(image.Rect(0, 0, 2, 2)))
+	if err := os.WriteFile(second, b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.Screenshots = []string{saved[0], second}
+	again, err := SaveUnfinished(dir, d)
+	if err != nil || len(again) != 2 || again[0] != saved[0] || again[1] == again[0] {
+		t.Fatalf("again = %v, %v", again, err)
+	}
+	if got, _ := os.ReadFile(again[0]); !bytes.Equal(got, kept) {
+		t.Fatal("re-saving overwrote the kept screenshot copy")
+	}
+	if err := os.Remove(again[0]); err != nil { // e.g. the draft was discarded meanwhile
+		t.Fatal(err)
+	}
+	if last, err := SaveUnfinished(dir, Draft{ReportID: "r3", Screenshots: again}); err != nil || !slices.Equal(last, again[1:]) {
+		t.Fatalf("missing copy kept: %v, %v", last, err)
 	}
 }

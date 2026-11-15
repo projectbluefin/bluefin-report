@@ -3,6 +3,8 @@ package privacy
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -129,6 +131,35 @@ func TestBuildScrubsMachineAndBootIDCopies(t *testing.T) {
 	}
 }
 
+// The issue body lists failed units from the summary, not from the attachment, so the
+// summary must be scrubbed too: unit names carry the hostname, the username and addresses.
+func TestBuildScrubsSummaryForIssueBody(t *testing.T) {
+	s := sample()
+	s.Warnings = []string{"Unable to connect to orca-desk: /var/home/jorge/.local/bus at 10.0.0.7:22"}
+	p, err := Build(s, Options{Username: "jorge"}) // user report not attached; its failed units are still listed
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"system: [hostname]-backup.service", "system: rpc-statd.service", "system: var-home-[username]-vault.mount"}
+	if !slices.Equal(p.Summary.FailedUnits, want) {
+		t.Errorf("Summary.FailedUnits = %q, want %q", p.Summary.FailedUnits, want)
+	}
+	wantWarn := []string{"Unable to connect to [hostname]: ~/.local/bus at [ipv4]:22"}
+	if !slices.Equal(p.Summary.Warnings, wantWarn) || !slices.Equal(p.Summary.Unreachable, wantWarn) {
+		t.Errorf("Summary.Warnings = %q, Unreachable = %q, want %q", p.Summary.Warnings, p.Summary.Unreachable, wantWarn)
+	}
+	if p.Summary.ImageID != "dakota-gaming" || p.Summary.Kernel != "7.2.11-ogc4" {
+		t.Errorf("Summary lost diagnostics: %+v", p.Summary)
+	}
+	if raw := s.Summary(); slices.Equal(raw.FailedUnits, p.Summary.FailedUnits) || !slices.Equal(raw.Warnings, []string{s.Warnings[0]}) {
+		t.Error("Build must scrub a copy and leave the snapshot's summary untouched")
+	}
+	// One more address and home path than the metrics alone: Unreachable repeats Warnings but is not counted twice.
+	if p.Removed["IPv4 address"] != 3 || p.Removed["home path"] != 2 {
+		t.Errorf("Removed = %v, want IPv4 address: 3, home path: 2", p.Removed)
+	}
+}
+
 // A rejected system report arrives as an empty Report; the hostname must still not leak via user metrics.
 func TestBuildScrubsHostnameWithoutSystemReport(t *testing.T) {
 	host, err := os.Hostname()
@@ -157,6 +188,71 @@ func TestBuildScrubsHostnameWithoutSystemReport(t *testing.T) {
 		if strings.Contains(string(p.JSON), secret) {
 			t.Errorf("payload leaks %q:\n%s", secret, p.JSON)
 		}
+	}
+}
+
+// With no system report there are no MachineID/BootID metrics; the local files must
+// still provide the literals, in both the kernel's dashed and the journal's plain form.
+func TestBuildScrubsMachineAndBootIDWithoutSystemReport(t *testing.T) {
+	original := localIDs
+	t.Cleanup(func() { localIDs = original })
+	dir := t.TempDir()
+	machineID := filepath.Join(dir, "machine-id")
+	bootID := filepath.Join(dir, "boot_id")
+	if err := os.WriteFile(machineID, []byte("0123456789abcdef0123456789abcdef\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bootID, []byte("fedcba98-7654-3210-fedc-ba9876543210\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	localIDs = []struct{ name, rule, path string }{
+		{"io.systemd.Basic.MachineID", "machine ID", machineID},
+		{"io.systemd.Basic.BootID", "boot ID", bootID},
+	}
+	s := snapshot.Snapshot{User: snapshot.Report{Metrics: []snapshot.Metric{
+		{Name: "io.systemd.Journal.HighPriorityMessage", Object: "app", Value: json.RawMessage(`{
+			"__CURSOR": "s=1a2b;i=4f;b=fedcba9876543210fedcba9876543210;m=1;t=2;x=3",
+			"_MACHINE_ID": "0123456789abcdef0123456789abcdef",
+			"_BOOT_ID": "fedcba9876543210fedcba9876543210",
+			"MESSAGE": "boot fedcba98-7654-3210-fedc-ba9876543210 failed"
+		}`)},
+	}}}
+	p, err := Build(s, Options{IncludeUser: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(p.JSON)
+	for _, secret := range []string{"0123456789abcdef", "fedcba98"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("payload still contains %q:\n%s", secret, out)
+		}
+	}
+	if p.Removed["machine ID"] != 1 || p.Removed["boot ID"] != 3 {
+		t.Errorf("Removed = %v", p.Removed)
+	}
+}
+
+// /etc/machine-id holds "uninitialized" on first boot; that word is not an ID and
+// must not be rewritten wherever it appears in a message.
+func TestBuildIgnoresUninitializedMachineID(t *testing.T) {
+	original := localIDs
+	t.Cleanup(func() { localIDs = original })
+	machineID := filepath.Join(t.TempDir(), "machine-id")
+	if err := os.WriteFile(machineID, []byte("uninitialized\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	localIDs = []struct{ name, rule, path string }{
+		{"io.systemd.Basic.MachineID", "machine ID", machineID},
+	}
+	s := snapshot.Snapshot{User: snapshot.Report{Metrics: []snapshot.Metric{
+		{Name: "io.systemd.Journal.HighPriorityMessage", Object: "app", Value: json.RawMessage(`{"MESSAGE": "device uninitialized"}`)},
+	}}}
+	p, err := Build(s, Options{IncludeUser: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(p.JSON), "device uninitialized") || p.Removed["machine ID"] != 0 {
+		t.Errorf("Removed = %v, payload:\n%s", p.Removed, p.JSON)
 	}
 }
 
@@ -293,6 +389,31 @@ func TestBuildUserScopeAndFilesAreOptIn(t *testing.T) {
 	}
 }
 
+// The Review preview shows only the start of the attachment, and the system report
+// alone fills it, so the opt-in user scope must come before the system scope (#85).
+func TestBuildPutsUserScopeBeforeSystem(t *testing.T) {
+	p, err := Build(sample(), Options{Username: "jorge", IncludeUser: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(p.JSON)
+	user, system := strings.Index(out, `"user"`), strings.Index(out, `"system"`)
+	if user < 0 || system < 0 || user > system {
+		t.Errorf("user scope at %d, system at %d; want user first", user, system)
+	}
+	var doc struct {
+		User *struct {
+			Metrics []json.RawMessage `json:"metrics"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(p.JSON, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.User == nil || len(doc.User.Metrics) != 1 {
+		t.Errorf("user scope = %+v, want its one metric attached", doc.User)
+	}
+}
+
 func TestBuildBudgetOmitsWholeFamiliesAndStaysValid(t *testing.T) {
 	full, _ := Build(sample(), Options{Username: "jorge"})
 	limit := len(full.JSON) - 50
@@ -367,6 +488,35 @@ func TestExtrasAreRedacted(t *testing.T) {
 	}
 	if p, _ := Build(sample(), Options{}); p.Extras != nil || strings.Contains(string(p.JSON), "extras") {
 		t.Error("no opt-in must mean no extras")
+	}
+}
+
+// NetworkManager quotes connection names and SSIDs, which locate the reporter.
+// Their removal is counted so Review lists it.
+func TestNetworkLogDropsConnectionNames(t *testing.T) {
+	log := "<warn> device (wlp2s0): Activation: failed for connection 'Home Wifi 5G' on orca-desk"
+	p, err := Build(sample(), Options{Extras: map[string]string{"networkLog": log, "bootErrors": "unit 'x' failed"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.Extras["networkLog"], "<warn> device (wlp2s0): Activation: failed for connection '[name]' on [hostname]"; got != want {
+		t.Fatalf("networkLog = %q, want %q", got, want)
+	}
+	if p.Removed["connection name"] != 1 || p.Extras["bootErrors"] != "unit 'x' failed" {
+		t.Fatalf("removed %v, bootErrors %q", p.Removed, p.Extras["bootErrors"])
+	}
+}
+
+// Extension UUIDs look like addresses but name public extensions; they must stay
+// readable while the reporter's identity is still removed.
+func TestGnomeExtensionsKeepUUIDs(t *testing.T) {
+	list := "dash-to-dock@micxgx.gmail.com\ngsconnect@andyholmes.github.io\norca-desk@jorge.example.com"
+	p, err := Build(sample(), Options{Username: "jorge", Extras: map[string]string{"gnomeExtensions": list}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := p.Extras["gnomeExtensions"], "dash-to-dock@micxgx.gmail.com\ngsconnect@andyholmes.github.io\n[hostname]@[username].example.com"; got != want {
+		t.Fatalf("gnomeExtensions = %q, want %q", got, want)
 	}
 }
 

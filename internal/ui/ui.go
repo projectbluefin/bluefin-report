@@ -24,6 +24,7 @@ import (
 	"codeberg.org/puregotk/puregotk/v4/gtk"
 
 	"github.com/projectbluefin/bluefin-report/internal/extras"
+	"github.com/projectbluefin/bluefin-report/internal/i18n"
 	"github.com/projectbluefin/bluefin-report/internal/privacy"
 	"github.com/projectbluefin/bluefin-report/internal/publish"
 	"github.com/projectbluefin/bluefin-report/internal/snapshot"
@@ -31,8 +32,9 @@ import (
 
 const appID = "io.projectbluefin.Report"
 
-// appName is the user-visible name; data/*.desktop and metainfo repeat it.
-const appName = "Report a Problem"
+// appName is the user-visible name, in English; data/*.desktop and metainfo
+// repeat it. Show it through i18n.G.
+var appName = i18n.N("Report a Problem")
 
 // appIcon is the icon name used by the About dialog; data/*.desktop Icon= must match (checked by a test).
 const appIcon = "io.projectbluefin.Report"
@@ -43,6 +45,13 @@ const previewBytes = 200 << 10
 var queues = []string{"", "3-clanker-queue", "3-human-queue"}
 
 var areas = []string{"", "desktop", "flatpak", "gaming", "hardware", "installer", "dx"}
+
+var projects = []struct{ name, repo string }{
+	{"Bluefin", ""}, // the running image's repository
+	{"ISO / Installer", "tuna-os/bootc-installer"},
+	{"Compass", "tuna-os/compass"},
+	{"Control Center", "projectbluefin/chairlift"},
+}
 
 // Version is set at release build time via -ldflags -X.
 var Version = "dev"
@@ -91,6 +100,7 @@ type ui struct {
 	spinner    *adw.Spinner
 	statusPage *adw.StatusPage
 	sysRows    [12]*adw.ActionRow
+	sysCopyBtn [12]*gtk.Button
 	ident      extras.Identity
 	health     *gtk.ListBox
 
@@ -99,11 +109,18 @@ type ui struct {
 	filter      *gtk.StringFilter
 	search      *gtk.SearchEntry
 	syncResults func() // filtered n-items notify misses 0→0 when the store empties under a query
+	// families holds family metadata from `systemd-report describe`, loaded lazily
+	// the first time the Metrics page is shown; metricRows are the current rows,
+	// refreshed once the descriptions arrive so already-realised rows pick up their
+	// tooltips without rebuilding the list.
+	families      map[string]snapshot.Family
+	metricRows    []string
+	familiesReady bool // describe has been requested at least once
 
 	// compose
 	mode        publish.Mode
 	composePage *adw.NavigationPage
-	repo        *adw.ActionRow // shows repoName; there is no choice: reports go to the running image's repo
+	repo        *adw.ComboRow
 	repoName    string
 	reportDesc  *gtk.Label
 	reportActs  []*gtk.Widget         // disabled until the snapshot names this image's repo
@@ -131,6 +148,8 @@ type ui struct {
 	// review
 	payload       privacy.Payload
 	reportID      string
+	draftID       string // the Unfinished draft this Compose form was saved to or restored from
+	detachedDraft string // draftID before its discard, restored if the discard is undone
 	publishing    bool
 	issueText     *gtk.TextBuffer
 	settingText   bool
@@ -175,6 +194,7 @@ func hold[T any](f T) *T { p := &f; keep = append(keep, p); return p }
 
 // Run starts the GTK application and returns its exit code.
 func Run(dryRun bool) int {
+	i18n.Init(i18n.Dir())
 	u := &ui{dryRun: dryRun}
 	u.app = adw.NewApplication(appID, gio.GApplicationNonUniqueValue)
 	u.app.ConnectActivate(hold(func(gio.Application) { u.activate() }))
@@ -209,12 +229,13 @@ func (u *ui) activate() {
 	}
 	u.win.ConnectCloseRequest(hold(func(gtk.Window) bool {
 		u.toasts.DismissAll() // runs pending discards: closing is not an Undo
+		u.saveCompose(false)
 		if !u.dryRun {
 			saveWindowState(&u.win.Window)
 		}
 		return false
 	}))
-	u.win.SetTitle(appName)
+	u.win.SetTitle(i18n.G(appName))
 
 	u.nav = adw.NewNavigationView()
 	u.nav.Add(u.buildOverview())
@@ -245,6 +266,7 @@ func (u *ui) activate() {
 	action("close", func() { u.win.Close() })
 	action("drafts", func() { u.refreshDrafts(); u.nav.PushByTag("drafts") })
 	action("shortcuts", u.shortcuts)
+	action("save-draft", func() { u.saveCompose(true) })
 	action("help", func() {
 		log.Print("ui: opening docs")
 		gtk.NewUriLauncher("https://docs.projectbluefin.io").Launch(&u.win.Window, nil, nil, 0)
@@ -273,20 +295,27 @@ func (u *ui) activate() {
 	}
 	stringAction("copy-metric", func(value string) {
 		u.win.GetClipboard().SetText(value)
-		u.toast("Metric value copied")
+		u.toast(i18n.G("Metric value copied"))
+	})
+	// System-detail rows on the front page carry the same copy affordance, so a
+	// user can grab the version or kernel to paste into a report or a forum post.
+	stringAction("copy-fact", func(value string) {
+		u.win.GetClipboard().SetText(value)
+		u.toast(i18n.G("Copied"))
 	})
 	stringAction("draft-resume", u.resume)
 	u.discardAct = stringAction("draft-discard", func(id string) {
 		if u.publishing {
-			u.toast("Wait for publishing to finish")
+			u.toast(i18n.G("Wait for publishing to finish"))
 			return
 		}
-		t := adw.NewToast("Report discarded")
-		t.SetButtonLabel("_Undo")
+		t := adw.NewToast(i18n.G("Report discarded"))
+		t.SetButtonLabel(i18n.G("_Undo"))
 		t.SetTimeout(0) // stays until Undo, close or the next toast: 5 s is too short to reach by keyboard
 		t.ConnectButtonClicked(u.onUndo)
 		t.ConnectDismissed(u.onDismissed)
 		u.discarded[t.Ptr] = id
+		u.detachCompose(id)
 		log.Printf("ui: draft %s discarded, undo available", id)
 		u.refreshDrafts()
 		u.addToast(t)
@@ -305,6 +334,7 @@ func (u *ui) activate() {
 	u.app.SetAccelsForAction("win.close", []string{"<Control>w"})
 	u.app.SetAccelsForAction("win.shortcuts", []string{"<Control>question"})
 	u.app.SetAccelsForAction("win.help", []string{"F1"})
+	u.app.SetAccelsForAction("win.save-draft", []string{"<Control>s"})
 	u.app.SetAccelsForAction("win.advance", []string{"<Control>Return"})
 	u.app.SetAccelsForAction("app.quit", []string{"<Control>q"})
 
@@ -321,7 +351,7 @@ func (u *ui) showError(heading, body string) {
 		body = string(unicode.ToUpper(r)) + body[n:]
 	}
 	a := adw.NewAlertDialog(heading, body)
-	a.AddResponse("close", "_Close")
+	a.AddResponse("close", i18n.G("_Close"))
 	a.SetDefaultResponse("close")
 	a.Present(&u.win.Widget)
 }
@@ -345,7 +375,7 @@ func (u *ui) toolbar(header *adw.HeaderBar, content *gtk.Widget) *adw.ToolbarVie
 	}
 	tv.AddTopBar(&header.Widget)
 	if u.dryRun {
-		b := adw.NewBanner("Dry run: nothing will be published")
+		b := adw.NewBanner(i18n.G("Dry run: nothing will be published"))
 		b.SetRevealed(true)
 		tv.AddTopBar(&b.Widget)
 	}
@@ -396,14 +426,15 @@ func pill(label string, cb func()) *gtk.Button {
 func (u *ui) shortcuts() {
 	s := adw.NewShortcutsSection("")
 	for _, kv := range [][2]string{
-		{"Refresh snapshot", "<Control>r F5"},
-		{"Search metrics", "<Control>f"},
-		{"Back", "<Alt>Left Escape"},
-		{"Continue to Review or Publish", "<Control>Return"},
-		{"Keyboard shortcuts", "<Control>question"},
-		{"Help", "F1"},
-		{"Close window", "<Control>w"},
-		{"Quit", "<Control>q"},
+		{i18n.G("Refresh snapshot"), "<Control>r F5"},
+		{i18n.G("Search metrics"), "<Control>f"},
+		{i18n.G("Back"), "<Alt>Left Escape"},
+		{i18n.G("Continue to Review or Publish"), "<Control>Return"},
+		{i18n.G("Save report as a draft"), "<Control>s"},
+		{i18n.G("Keyboard shortcuts"), "<Control>question"},
+		{i18n.G("Help"), "F1"},
+		{i18n.G("Close window"), "<Control>w"},
+		{i18n.G("Quit"), "<Control>q"},
 	} {
 		s.Add(adw.NewShortcutsItem(kv[0], kv[1]))
 	}
@@ -483,7 +514,7 @@ func fakeGHStream(_ context.Context, _ []byte, onLine func(string), args ...stri
 
 func (u *ui) about() {
 	a := adw.NewAboutDialog()
-	a.SetApplicationName(appName)
+	a.SetApplicationName(i18n.G(appName))
 	a.SetApplicationIcon(appIcon)
 	a.SetDeveloperName("Project Bluefin")
 	a.SetVersion(Version)

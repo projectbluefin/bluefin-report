@@ -17,6 +17,7 @@ import (
 	"codeberg.org/puregotk/puregotk/v4/gtk"
 
 	"github.com/projectbluefin/bluefin-report/internal/extras"
+	"github.com/projectbluefin/bluefin-report/internal/i18n"
 	"github.com/projectbluefin/bluefin-report/internal/privacy"
 	"github.com/projectbluefin/bluefin-report/internal/publish"
 	"github.com/projectbluefin/bluefin-report/internal/snapshot"
@@ -26,20 +27,25 @@ import (
 
 func (u *ui) buildCompose() {
 	g := adw.NewPreferencesGroup()
-	u.repo = adw.NewActionRow()
-	u.repo.SetTitle("Project")
-	u.repo.AddCssClass("property")
-	u.repo.SetSubtitleSelectable(true)
+	u.repo = adw.NewComboRow()
+	u.repo.SetTitle(i18n.G("Project"))
+	names := make([]string, len(projects))
+	for i, p := range projects {
+		names[i] = p.name
+	}
+	u.repo.SetModel(gtk.NewStringList(names))
+	u.repo.SetSelected(0)
 	g.Add(&u.repo.Widget)
 	sync := hold(func(gobject.Object, uintptr) { u.syncReview() })
+	u.repo.ConnectNotify(sync)
 
 	u.title = adw.NewEntryRow()
-	u.title.SetTitle("Title")
+	u.title.SetTitle(i18n.G("Title"))
 	u.title.ConnectNotify(sync)
 	g.Add(&u.title.Widget)
 
 	u.issueRef = adw.NewEntryRow()
-	u.issueRef.SetTitle("Issue link or number (#123)")
+	u.issueRef.SetTitle(i18n.G("Issue link or number (#123)"))
 	u.issueRef.ConnectNotify(sync)
 	g.Add(&u.issueRef.Widget)
 	u.refErr = gtk.NewLabel("")
@@ -51,7 +57,7 @@ func (u *ui) buildCompose() {
 	u.refErr.SetVisible(false)
 	g.Add(&u.refErr.Widget) // not a row: AdwPreferencesGroup places it below the list
 
-	dg := group("What Happened?")
+	dg := group(i18n.G("What Happened?"))
 	u.descGroup = dg
 	u.desc = gtk.NewTextBuffer(nil)
 	tv := gtk.NewTextViewWithBuffer(u.desc)
@@ -66,7 +72,7 @@ func (u *ui) buildCompose() {
 	tv.SetAcceptsTab(false) // Tab moves focus, as in every other form field
 	dg.Add(&tv.Widget)
 
-	stepsGroup := group("Steps to Reproduce (Optional)")
+	stepsGroup := group(i18n.G("Steps to Reproduce (Optional)"))
 	u.steps = gtk.NewTextBuffer(nil)
 	stv := gtk.NewTextViewWithBuffer(u.steps)
 	stv.SetWrapMode(gtk.WrapWordCharValue)
@@ -77,49 +83,51 @@ func (u *ui) buildCompose() {
 	stv.SetSizeRequest(-1, 120)
 	stv.AddCssClass("card")
 	stv.SetAcceptsTab(false)
-	a11yLabel(&stv.Widget, "Steps to reproduce")
+	a11yLabel(&stv.Widget, i18n.G("Steps to reproduce"))
 	stepsGroup.Add(&stv.Widget)
 
-	og := group("Options")
+	og := group(i18n.G("Options"))
 	u.attach = adw.NewSwitchRow()
-	u.attach.SetTitle("Attach System Report")
-	u.attach.SetSubtitle("Reviewed before anything is sent")
+	u.attach.SetTitle(i18n.G("Attach System Report"))
+	u.attach.SetSubtitle(i18n.G("Reviewed before anything is sent"))
 	u.attach.SetActive(true)
 	og.Add(&u.attach.Widget)
 	u.includeUser = adw.NewSwitchRow()
-	u.includeUser.SetTitle("Include User Session")
+	u.includeUser.SetTitle(i18n.G("Include User Session"))
+	u.syncUserSession()
 	og.Add(&u.includeUser.Widget)
 	u.queue = adw.NewComboRow()
-	u.queue.SetTitle("Who should look at it")
-	u.queue.SetModel(gtk.NewStringList([]string{"No preference", "Machine analysis", "Human only"}))
+	u.queue.SetTitle(i18n.G("Who should look at it"))
+	u.queue.SetModel(gtk.NewStringList([]string{i18n.G("No preference"), i18n.G("Machine analysis"), i18n.G("Human only")}))
 	og.Add(&u.queue.Widget)
 	u.area = adw.NewComboRow()
-	u.area.SetTitle("Area")
-	u.area.SetModel(gtk.NewStringList([]string{"Not sure", "Desktop", "Flatpak apps", "Gaming", "Hardware", "Installer", "Developer tools"}))
+	u.area.SetTitle(i18n.G("Area"))
+	u.area.SetModel(gtk.NewStringList([]string{i18n.G("Not sure"), i18n.G("Desktop"), i18n.G("Flatpak apps"), i18n.G("Gaming"),
+		i18n.G("Hardware"), i18n.G("Installer"), i18n.G("Developer tools")}))
 	og.Add(&u.area.Widget)
 
-	xg := group("Include Diagnostics")
-	xg.SetDescription("Off by default. Scrubbed like the report and shown in Review before anything is sent")
+	xg := group(i18n.G("Include Diagnostics"))
+	xg.SetDescription(i18n.G("Off by default. Scrubbed like the report and shown in Review before anything is sent"))
 	for _, s := range extras.Sections {
 		r := adw.NewSwitchRow()
-		r.SetTitle(s.Title)
+		r.SetTitle(i18n.G(s.Title))
 		xg.Add(&r.Widget)
 		u.optIn = append(u.optIn, r)
 	}
 
-	sg := group("Screenshots")
-	sg.SetDescription("Public. Metadata is stripped by re-encoding. PNG, JPEG or GIF; up to 10 files, 10 MB each")
+	sg := group(i18n.G("Screenshots"))
+	sg.SetDescription(i18n.G("Public. Metadata is stripped by re-encoding. PNG, JPEG or GIF; up to 10 files, 10 MB each"))
 	u.shotList = gtk.NewListBox()
 	u.shotList.SetSelectionMode(gtk.SelectionNoneValue)
 	u.shotList.AddCssClass("boxed-list")
 	sg.Add(&u.shotList.Widget)
 	filter := gtk.NewFileFilter()
-	filter.SetName("Images")
+	filter.SetName(i18n.G("Images"))
 	for _, ext := range publish.ScreenshotExts {
 		filter.AddSuffix(ext[1:])
 	}
 	u.shotDialog = gtk.NewFileDialog()
-	u.shotDialog.SetTitle("Add Screenshots")
+	u.shotDialog.SetTitle(i18n.G("Add Screenshots"))
 	u.shotDialog.SetDefaultFilter(filter)
 	picked := hold(gio.AsyncReadyCallback(func(_, res, _ uintptr) {
 		files, err := u.shotDialog.OpenMultipleFinish(gio.SimpleAsyncResultNewFromInternalPtr(res))
@@ -135,18 +143,18 @@ func (u *ui) buildCompose() {
 		}
 		if len(u.shots) > publish.MaxScreenshots {
 			u.shots = u.shots[:publish.MaxScreenshots]
-			u.toast(fmt.Sprintf("Only %d screenshots can be attached", publish.MaxScreenshots))
+			u.toast(fmt.Sprintf(i18n.NG("Only %d screenshot can be attached", "Only %d screenshots can be attached", publish.MaxScreenshots), publish.MaxScreenshots))
 		}
 		u.syncShots()
 	}))
 	u.addShot = adw.NewButtonRow() // HIG: add button row at the end of an editable list
 	u.addShot.Ref()                // syncShots re-appends it after RemoveAll
-	u.addShot.SetTitle("Add Screenshots…")
+	u.addShot.SetTitle(i18n.G("Add Screenshots…"))
 	u.addShot.SetStartIconName("list-add-symbolic")
 	u.addShot.ConnectActivated(hold(func(adw.ButtonRow) { u.shotDialog.OpenMultiple(&u.win.Window, nil, picked, 0) }))
 	u.shotList.Append(&u.addShot.Widget)
 
-	u.reviewBtn = pill("Review", u.openReview)
+	u.reviewBtn = pill(i18n.G("Review"), u.openReview)
 	u.reviewBtn.AddCssClass("suggested-action")
 	u.reviewBtn.SetHalign(gtk.AlignCenterValue)
 	u.reviewBtn.SetMarginTop(6)
@@ -156,7 +164,7 @@ func (u *ui) buildCompose() {
 	u.newOnly = []*gtk.Widget{&u.title.Widget, &u.queue.Widget, &u.area.Widget, &stepsGroup.Widget}
 	tv2 := u.toolbar(nil, scrolled(&g.Widget, &dg.Widget, &stepsGroup.Widget, &og.Widget, &xg.Widget, &sg.Widget))
 	tv2.AddBottomBar(&u.reviewBtn.Widget) // like Review's Publish: always visible, never scrolled away
-	u.composePage = adw.NewNavigationPage(&tv2.Widget, "New Issue")
+	u.composePage = adw.NewNavigationPage(&tv2.Widget, i18n.G("New Issue"))
 	u.composePage.SetTag("compose")
 	u.nav.Add(u.composePage)
 }
@@ -169,7 +177,7 @@ func (u *ui) syncShots() {
 		r.SetTitle(filepath.Base(p))
 		r.SetTitleLines(1)
 		b := gtk.NewButtonFromIconName("list-remove-symbolic")
-		b.SetTooltipText("Remove")
+		b.SetTooltipText(i18n.G("Remove"))
 		b.SetValign(gtk.AlignCenterValue)
 		b.AddCssClass("flat")
 		b.SetActionName("win.shot-remove")
@@ -184,11 +192,24 @@ func (u *ui) syncShots() {
 	}
 }
 
+func (u *ui) selectedRepo() string {
+	if u.mode == publish.NewIssue {
+		if repo := projects[u.repo.GetSelected()].repo; repo != "" {
+			return repo
+		}
+	}
+	return u.repoName
+}
+
 // syncReview enables Review once the snapshot is ready and the mode's
 // required field is filled.
 func (u *ui) syncReview() {
 	if u.reviewBtn == nil {
 		return // notify fires while the page is still being built
+	}
+	repo := u.selectedRepo()
+	if u.repo.GetSubtitle() != repo {
+		u.repo.SetSubtitle(repo)
 	}
 	ok := strings.TrimSpace(u.title.GetText()) != ""
 	msg := ""
@@ -197,7 +218,8 @@ func (u *ui) syncReview() {
 		_, err := publish.ParseIssueRef(u.repoName, ref)
 		ok = err == nil
 		if err != nil && ref != "" {
-			msg = "Enter an issue number or a link to an issue in " + u.repoName
+			// TRANSLATORS: %s is a GitHub repository, e.g. projectbluefin/dakota.
+			msg = fmt.Sprintf(i18n.G("Enter an issue number or a link to an issue in %s"), u.repoName)
 		}
 	}
 	u.refErr.SetText(msg)
@@ -208,6 +230,32 @@ func (u *ui) syncReview() {
 		u.issueRef.RemoveCssClass("error")
 	}
 	u.reviewBtn.SetSensitive(u.snap != nil && ok)
+}
+
+// userSessionRow says what "Include User Session" would attach from user, and
+// whether there is anything to attach at all.
+func userSessionRow(user snapshot.Report) (enabled bool, subtitle string) {
+	n := len(user.Metrics)
+	if n == 0 {
+		return false, i18n.G("No user-session data was collected")
+	}
+	return true, fmt.Sprintf(i18n.NG("Adds %d entry about your desktop session’s services",
+		"Adds %d entries about your desktop session’s services", n), n)
+}
+
+// syncUserSession turns "Include User Session" off and disables it when the
+// snapshot has no user-scope metrics, so it never claims to add what isn't there.
+func (u *ui) syncUserSession() {
+	var user snapshot.Report
+	if u.snap != nil {
+		user = u.snap.User
+	}
+	enabled, subtitle := userSessionRow(user)
+	u.includeUser.SetSubtitle(subtitle)
+	if !enabled {
+		u.includeUser.SetActive(false)
+	}
+	u.includeUser.SetSensitive(enabled)
 }
 
 // openCompose shows the form for m. A half-written report survives Back or
@@ -221,24 +269,25 @@ func (u *ui) openCompose(m publish.Mode) {
 	for _, w := range u.newOnly {
 		w.SetVisible(newIssue)
 	}
+	u.repo.SetSensitive(newIssue)
 	u.issueRef.SetVisible(!newIssue)
-	desc, page := "What Happened?", "New Issue"
+	desc, page := i18n.G("What Happened?"), i18n.G("New Issue")
 	switch m {
 	case publish.Confirm:
-		desc, page = "What You’re Seeing (Optional)", "Confirm Existing Issue"
+		desc, page = i18n.G("What You’re Seeing (Optional)"), i18n.G("Confirm Existing Issue")
 	case publish.Update:
-		desc, page = "What Changed? (Optional)", "Update Your Issue"
+		desc, page = i18n.G("What Changed? (Optional)"), i18n.G("Update Your Issue")
 	}
 	u.descGroup.SetTitle(desc)
 	a11yLabel(&u.descView.Widget, desc)
 	u.composePage.SetTitle(page)
-	u.repo.SetSubtitle(u.repoName)
 	u.syncReview()
 	u.nav.PushByTag("compose")
 }
 
 // resetCompose empties the Compose form to its defaults.
 func (u *ui) resetCompose() {
+	u.draftID = ""
 	u.title.SetText("")
 	u.issueRef.SetText("")
 	u.desc.SetText("", -1)
@@ -246,6 +295,7 @@ func (u *ui) resetCompose() {
 	u.attach.SetActive(true)
 	u.includeUser.SetActive(false)
 	u.queue.SetSelected(0)
+	u.repo.SetSelected(0)
 	u.area.SetSelected(0)
 	for _, r := range u.optIn {
 		r.SetActive(false)
@@ -287,14 +337,14 @@ func (u *ui) buildReview() {
 	u.removed.AddCssClass("boxed-list")
 
 	stack := adw.NewViewStack()
-	stack.AddTitledWithIcon(monoView(u.issueText, true, "Issue text"), "issue", "Issue Text", "document-edit-symbolic")
-	stack.AddTitledWithIcon(monoView(u.attachText, false, "Attachment"), "attachment", "Attachment", "mail-attachment-symbolic")
-	rg := group("What Was Removed")
-	rg.SetDescription("Values scrubbed or dropped before sharing")
+	stack.AddTitledWithIcon(monoView(u.issueText, true, i18n.G("Issue text")), "issue", i18n.G("Issue Text"), "document-edit-symbolic")
+	stack.AddTitledWithIcon(monoView(u.attachText, false, i18n.G("Attachment")), "attachment", i18n.G("Attachment"), "mail-attachment-symbolic")
+	rg := group(i18n.G("What Was Removed"))
+	rg.SetDescription(i18n.G("Values scrubbed or dropped before sharing"))
 	rg.Add(&u.removed.Widget)
 	rsw := gtk.NewScrolledWindow() // not scrolled(): the page is already clamped and padded
 	rsw.SetChild(&rg.Widget)
-	stack.AddTitledWithIcon(&rsw.Widget, "removed", "Removed", "edit-clear-symbolic")
+	stack.AddTitledWithIcon(&rsw.Widget, "removed", i18n.G("Removed"), "edit-clear-symbolic")
 	stack.SetSizeRequest(-1, 280) // outer scroll keeps Consent reachable at 360×294
 
 	// Inline, not in the header: it switches only this panel, and the header keeps the page title.
@@ -302,14 +352,14 @@ func (u *ui) buildReview() {
 	sw.SetStack(stack)
 	sw.SetHalign(gtk.AlignCenterValue)
 
-	u.shotsGroup = group("Attachments")
-	u.consentGroup = group("Consent")
+	u.shotsGroup = group(i18n.G("Attachments"))
+	u.consentGroup = group(i18n.G("Consent"))
 	cg := u.consentGroup
 	u.consentIssue = adw.NewSwitchRow()
-	u.consentIssue.SetTitle("I understand the issue text will be public")
+	u.consentIssue.SetTitle(i18n.G("I understand the issue text will be public"))
 	u.consentReport = adw.NewSwitchRow()
-	u.consentReport.SetTitle("I understand the full report will be attached publicly to the issue")
-	u.consentReport.SetSubtitle("Anyone who can see the issue can read it")
+	u.consentReport.SetTitle(i18n.G("I understand the full report will be attached publicly to the issue"))
+	u.consentReport.SetSubtitle(i18n.G("Anyone who can see the issue can read it"))
 	sync := hold(func(gobject.Object, uintptr) { u.syncPublish() })
 	u.consentIssue.ConnectNotify(sync)
 	u.consentReport.ConnectNotify(sync)
@@ -317,7 +367,7 @@ func (u *ui) buildReview() {
 	cg.Add(&u.consentReport.Widget)
 
 	u.saveDialog = gtk.NewFileDialog()
-	u.saveDialog.SetTitle("Export Report")
+	u.saveDialog.SetTitle(i18n.G("Export Report"))
 	saved := hold(gio.AsyncReadyCallback(func(_, res, _ uintptr) {
 		f, err := u.saveDialog.SaveFinish(gio.SimpleAsyncResultNewFromInternalPtr(res))
 		if err != nil || f == nil {
@@ -325,17 +375,17 @@ func (u *ui) buildReview() {
 		}
 		path := f.GetPath()
 		if err := os.WriteFile(path, u.payload.JSON, 0o600); err != nil {
-			u.showError("Couldn't Export Report", err.Error())
+			u.showError(i18n.G("Couldn't Export Report"), err.Error())
 			return
 		}
 		log.Printf("ui: exported %d bytes to %s", len(u.payload.JSON), path)
-		u.toast("Report exported")
+		u.toast(i18n.G("Report exported"))
 	}))
-	export := pill("Export Report…", func() {
+	export := pill(i18n.G("Export Report…"), func() {
 		u.saveDialog.SetInitialName("bluefin-report.json")
 		u.saveDialog.Save(&u.win.Window, nil, saved, 0)
 	})
-	u.publishBtn = pill("Publish", u.publish)
+	u.publishBtn = pill(i18n.G("Publish"), u.publish)
 	u.publishBtn.AddCssClass("suggested-action")
 	btns := gtk.NewBox(gtk.OrientationHorizontalValue, 12) // not homogeneous: two Export-width pills overflow 360 px
 	btns.SetHalign(gtk.AlignCenterValue)
@@ -347,7 +397,7 @@ func (u *ui) buildReview() {
 
 	tv := u.toolbar(nil, scrolled(&sw.Widget, &stack.Widget, &u.shotsGroup.Widget, &cg.Widget))
 	tv.AddBottomBar(&btns.Widget)
-	p := adw.NewNavigationPage(&tv.Widget, "Review")
+	p := adw.NewNavigationPage(&tv.Widget, i18n.G("Review"))
 	p.SetTag("review")
 	u.nav.Add(p)
 }
@@ -405,7 +455,7 @@ func (u *ui) showReview(vals map[string]string) {
 	// Synchronous on purpose: measured ~40 ms (9.5k metrics, 725 KB payload) on a dev host.
 	p, err := privacy.Build(*u.snap, privacy.Options{Username: name, IncludeUser: u.includeUser.GetActive(), Extras: vals})
 	if err != nil {
-		u.showError("Couldn't Prepare Report", err.Error())
+		u.showError(i18n.G("Couldn't Prepare Report"), err.Error())
 		return
 	}
 	u.payload = p
@@ -418,11 +468,11 @@ func (u *ui) showReview(vals map[string]string) {
 
 	preview := string(p.JSON)
 	if len(preview) > previewBytes {
-		preview = strings.ToValidUTF8(preview[:previewBytes], "") +
-			fmt.Sprintf("\n\n… preview truncated at 200 KB of %d KB. Export and Publish use the full report.\n", len(p.JSON)>>10)
+		preview = strings.ToValidUTF8(preview[:previewBytes], "") + "\n\n" +
+			fmt.Sprintf(i18n.G("… preview truncated at 200 KB of %d KB. Export and Publish use the full report."), len(p.JSON)>>10) + "\n"
 	}
 	if !u.attach.GetActive() {
-		preview = "No attachment: “Attach system report” is off."
+		preview = i18n.G("No attachment: “Attach System Report” is off.")
 	}
 	u.attachText.SetText(preview, -1)
 
@@ -434,13 +484,13 @@ func (u *ui) showReview(vals map[string]string) {
 		u.removed.Append(&r.Widget)
 	}
 	for rule, n := range p.Removed {
-		row(rule, fmt.Sprintf("%d values", n))
+		row(rule, fmt.Sprintf(i18n.NG("%d value", "%d values", n), n))
 	}
 	for _, f := range p.Omitted {
-		row(f, "Omitted to fit the size limit")
+		row(f, i18n.G("Omitted to fit the size limit"))
 	}
 	if len(p.Removed)+len(p.Omitted) == 0 {
-		row("Nothing", "No values needed scrubbing")
+		row(i18n.G("Nothing"), i18n.G("No values needed scrubbing"))
 	}
 	names := make([]string, len(u.shots))
 	for i, p := range u.shots {
@@ -448,13 +498,12 @@ func (u *ui) showReview(vals map[string]string) {
 	}
 	u.shotsGroup.SetDescription(strings.Join(names, "\n"))
 	u.shotsGroup.SetVisible(len(u.shots) > 0)
-	u.consentGroup.SetDescription("")
+	u.consentGroup.SetDescription("Publish to " + u.selectedRepo())
 	if len(u.shots) > 0 {
-		n := "1 screenshot becomes"
-		if len(u.shots) > 1 {
-			n = fmt.Sprintf("%d screenshots become", len(u.shots))
-		}
-		u.consentGroup.SetDescription(n + " public. Metadata is stripped, but image content is not scrubbed.")
+		u.consentGroup.SetDescription(u.consentGroup.GetDescription() + "\n" + fmt.Sprintf(i18n.NG(
+			"%d screenshot becomes public. Metadata is stripped, but image content is not scrubbed.",
+			"%d screenshots become public. Metadata is stripped, but image content is not scrubbed.",
+			len(u.shots)), len(u.shots)))
 	}
 	u.consentIssue.SetActive(false)
 	u.consentReport.SetActive(false)
@@ -464,11 +513,12 @@ func (u *ui) showReview(vals map[string]string) {
 }
 
 func (u *ui) markdown() string {
-	return issueMarkdown(u.mode, bufText(u.desc), bufText(u.steps), u.sum, u.ident, u.payload.Extras)
+	return issueMarkdown(u.mode, bufText(u.desc), bufText(u.steps), u.payload.Summary, u.ident, u.payload.Extras)
 }
 
 // issueMarkdown is the issue or comment text Review pre-fills, before the
 // publisher appends its metadata. It reads no widgets, so tests can pin it.
+// It stays in English: it is written for the maintainers who read the issue.
 func issueMarkdown(mode publish.Mode, desc, steps string, sum snapshot.Summary, ident extras.Identity, details map[string]string) string {
 	var b strings.Builder
 	switch mode {

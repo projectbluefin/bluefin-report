@@ -3,7 +3,7 @@
 A GTK4/Libadwaita app that turns a [`systemd-report`](https://www.freedesktop.org/software/systemd/man/latest/systemd-report.html)
 snapshot into a reviewed, privacy-scrubbed GitHub issue. You see exactly what
 leaves the machine before anything is sent; it is published with your own `gh`
-login as an issue in the right Bluefin repository, with the full report attached.
+login as an issue in the right repository (defaulting to your Bluefin image, with options for ISO / Installer, Compass, or Control Center), with the full report attached.
 
 ## Screenshots
 
@@ -70,7 +70,11 @@ When Overview shows a problem, Get Help Fixing This copies a short summary
   errors from this boot (`journalctl -b0 -p err`, last 40 lines), crashes in the last
   7 days (`coredumpctl list`), enabled GNOME extensions, installed Flatpak apps. They are
   scrubbed like the report and attached under `extras`; errors and crashes also appear
-  collapsed in the issue text.
+  collapsed in the issue text. Also opt-in, unprivileged and only in the attached report:
+  kernel problems in the previous boot, desktop, update/boot, network, and Flatpak/portal
+  warnings from this boot's journal, and disks and graphics (`lsblk`, `nvidia-smi`, AMD sysfs).
+  Network warnings also lose quoted connection names and SSIDs; extension IDs such as
+  `dash-to-dock@micxgx.gmail.com` are kept although they look like email addresses.
 - Always shown: image ref, tag and manifest digest, CPU model, GPUs (PCI IDs and driver),
   GNOME Shell version.
 - Sent byte-for-byte as shown in Review; editing anything withdraws consent.
@@ -83,12 +87,17 @@ When Overview shows a problem, Get Help Fixing This copies a short summary
   (an issue artifact): anyone who can see the issue can read it. Only if GitHub
   refuses artifacts does it fall back to a secret gist linked in an issue comment.
 - Screenshots (png, jpg, jpeg, gif; up to 10, 10 MiB each) are re-encoded to strip
-  metadata, but their visible content is not scrubbed and is public. They go in one
-  issue comment (Confirm: on the one "Same problem here." comment, which also names
-  your report, attached to that issue as `systemd-report-<reportID>.json`) and are
-  copied into the draft until published.
-- Raw snapshots stay in memory. Drafts keep only the reviewed payload under
-  `$XDG_STATE_HOME/bluefin-report/drafts/` (mode 0700/0600). Discarding a
+  metadata, but their visible content is not scrubbed and is public. They are uploaded
+  to the issue as one artifact, `screenshots.md` (Confirm: `screenshots-<reportID>.md`,
+  next to your report `systemd-report-<reportID>.json`). Only if GitHub refuses artifacts
+  do they go in an issue comment instead. They are copied into the draft until published.
+- Raw snapshots stay in memory. Drafts are kept under
+  `$XDG_STATE_HOME/bluefin-report/drafts/` (mode 0700/0600): a reviewed draft keeps
+  the reviewed payload; an unfinished one (saved with Ctrl+S, or automatically when
+  the window closes) keeps the unreviewed title, description, steps, queue, area and
+  screenshot copies, but no system report. Resume reopens an unfinished draft in
+  Compose; it must be reviewed before it can be published. `--dry-run` never saves
+  unfinished drafts. Discarding a
   draft can be undone from its toast; its files are deleted only when the toast
   goes away (or the window closes). It never deletes anything already on GitHub.
   The window size is kept in `$XDG_STATE_HOME/bluefin-report/window.json` (not under `--dry-run`).
@@ -102,6 +111,8 @@ make lint           # gofmt + go vet + go mod tidy -diff
 make validate-data  # desktop-file-validate (+ appstreamcli if present)
 make screenshots    # capture the running app locally; requires Xvfb/AT-SPI
 make bump           # tag the next release, YY.MM.N (does not push)
+make pot            # po/bluefin-report.pot translation template; needs GNU gettext ≥ 0.25
+make mo data        # compile po/*.po; merge them into the desktop file and metainfo
 ```
 
 Releases use calendar versions `YY.MM.N`, not a release for every commit.
@@ -111,5 +122,16 @@ run manually in dry-run mode. `bluefin-report --version` prints the running vers
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for release controls, screenshot runtime
 requirements, and the README-refresh bot's permissions.
+
+### Translations
+
+The app uses GNU gettext. Wrap user-visible text in `i18n.G` (or `i18n.NG` for
+counts, `i18n.N` to mark text translated later) and list the file in
+`po/POTFILES`; text sent to GitHub stays in English. To add a language, run
+`make pot`, create `po/<lang>.po` from the template (for example with
+`msginit -l <lang> -i po/bluefin-report.pot -o po/<lang>.po`), and add `<lang>`
+to `po/LINGUAS`. Releases ship the compiled catalogs in `locale/` next to the
+binary; to try one locally, run `make build mo` and start
+`LANGUAGE=<lang> ./build/bluefin-report --dry-run`.
 
 Licensed under Apache-2.0.

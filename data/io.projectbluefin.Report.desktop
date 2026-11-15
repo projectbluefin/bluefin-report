@@ -7,5 +7,6 @@ Exec=bluefin-report
 Icon=io.projectbluefin.Report
 Terminal=false
 Categories=Utility;X-GNOME-Utilities;GTK;
+# TRANSLATORS: Search terms for this app, each followed by a semicolon. Keep the English terms and add yours.
 Keywords=bug;crash;freeze;error;issue;problem;report;feedback;support;help;logs;diagnostics;troubleshoot;GitHub;systemd;
 StartupNotify=true

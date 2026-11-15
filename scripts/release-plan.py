@@ -20,7 +20,7 @@ def git(*args):
 
 
 def relevant(path):
-    return path in RELEASE_FILES or path.startswith(("cmd/", "internal/", "scripts/")) or (
+    return path in RELEASE_FILES or path.startswith(("cmd/", "internal/", "po/", "scripts/")) or (
         path.startswith("data/") and not path.startswith("data/screenshots/")
     )
 

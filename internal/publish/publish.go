@@ -4,7 +4,6 @@
 package publish
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -13,19 +12,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/gif"
-	"image/jpeg"
-	"image/png"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -37,134 +28,20 @@ const (
 	Update
 )
 
+// Draft is one report. An Unfinished draft keeps the description as typed in Body and the steps to reproduce in Steps.
 type Draft struct {
 	ReportID   string // set once when Review opens; Submit with a known ID resumes instead of re-creating
 	Mode       Mode
 	Repo       string
 	Title      string
 	Body       string
+	Steps      string `json:",omitempty"`
 	IssueRef   string
 	Attachment []byte
 	Queue      string
 	Area       string // NewIssue only: "" or desktop, flatpak, gaming, hardware, installer, dx
 	// Screenshots are re-encoded (metadata stripped, content not scrubbed). Submit writes them into the draft dir and stores those paths.
 	Screenshots []string
-}
-
-// Screenshot limits, checked before any network call.
-const (
-	MaxScreenshots     = 10
-	MaxScreenshotBytes = 10 << 20
-)
-
-// ScreenshotExts are the attachable file types: those stdlib can decode and re-encode.
-var ScreenshotExts = []string{".png", ".jpg", ".jpeg", ".gif"}
-
-func checkScreenshots(paths []string) error {
-	if len(paths) > MaxScreenshots {
-		return fmt.Errorf("too many screenshots: %d (GitHub uploads are limited here to %d per report)", len(paths), MaxScreenshots)
-	}
-	for _, p := range paths {
-		if !slices.Contains(ScreenshotExts, strings.ToLower(filepath.Ext(p))) {
-			return fmt.Errorf("%s: not a supported screenshot type (%s)", filepath.Base(p), strings.Join(ScreenshotExts, ", "))
-		}
-		fi, err := os.Stat(p)
-		if err != nil {
-			return err
-		}
-		if fi.Size() > MaxScreenshotBytes {
-			return fmt.Errorf("%s is %d MiB: each screenshot must be at most 10 MiB to upload", filepath.Base(p), fi.Size()>>20)
-		}
-	}
-	return nil
-}
-
-// screenshotData prepares exactly the bytes and filename that will be uploaded.
-func screenshotData(p string) ([]byte, string, error) {
-	f, err := os.Open(p)
-	if err != nil {
-		return nil, "", err
-	}
-	img, _, err := image.Decode(f) // first frame only for GIF
-	f.Close()
-	if err != nil {
-		return nil, "", fmt.Errorf("%s: not a readable image: %w", filepath.Base(p), err)
-	}
-	var b bytes.Buffer
-	if ext := strings.ToLower(filepath.Ext(p)); ext == ".jpg" || ext == ".jpeg" {
-		err = jpeg.Encode(&b, img, &jpeg.Options{Quality: 92})
-	} else {
-		p = strings.TrimSuffix(p, filepath.Ext(p)) + ".png"
-		err = png.Encode(&b, img)
-	}
-	return b.Bytes(), filepath.Base(p), err
-}
-
-func screenshotDestination(dir, name string, i int, previous []string) string {
-	dst := filepath.Join(dir, name)
-	if slices.Contains(previous, dst) {
-		dst = filepath.Join(dir, fmt.Sprintf("%d-%s", i, name))
-	}
-	return dst
-}
-
-// copyScreenshots re-encodes the files into dir (0600) so no EXIF/text metadata survives
-// and a resume survives the originals moving. Undecodable files are rejected.
-func copyScreenshots(dir string, paths []string) ([]string, error) {
-	if len(paths) == 0 {
-		return nil, nil
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
-	}
-	var out []string
-	for i, p := range paths {
-		data, name, err := screenshotData(p)
-		if err != nil {
-			return nil, err
-		}
-		dst := screenshotDestination(dir, name, i, out)
-		if err := os.WriteFile(dst, data, 0o600); err != nil {
-			return nil, err
-		}
-		out = append(out, dst)
-	}
-	return out, nil
-}
-
-// sameScreenshots compares the ordered upload names and bytes, not original paths:
-// saved drafts point at metadata-stripped copies, while Submit receives the originals.
-func sameScreenshots(saved, reviewed []string) (bool, error) {
-	if len(saved) != len(reviewed) {
-		return false, nil
-	}
-	for i, p := range reviewed {
-		want, err := os.ReadFile(saved[i])
-		if err != nil {
-			return false, err
-		}
-		if p == saved[i] {
-			continue // already the draft copy; do not lossy-encode a JPEG twice
-		}
-		got, name, err := screenshotData(p)
-		if err != nil {
-			return false, err
-		}
-		dst := screenshotDestination(filepath.Dir(saved[i]), name, i, saved[:i])
-		if dst != saved[i] || !bytes.Equal(want, got) {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-// attachArgs returns gh --attach flags for every screenshot.
-func attachArgs(paths []string) []string {
-	var a []string
-	for _, p := range paths {
-		a = append(a, "--attach", p)
-	}
-	return a
 }
 
 // NewReportID returns a random id that tags every write of one report.
@@ -188,9 +65,10 @@ const (
 	GistPending    Stage = "GistPending"  // artifacts refused: fallback secret gist not yet created
 	GistCreated    Stage = "GistCreated"  // fallback gist exists; its link comment not yet posted
 	Published      Stage = "Published"
-	ShotsPending   Stage = "ShotsPending"   // NewIssue: report done; screenshots comment not yet confirmed
+	ShotsPending   Stage = "ShotsPending"   // NewIssue, artifacts refused: report done; screenshots comment not yet confirmed
 	CommentPending Stage = "CommentPending" // Confirm/Update: report attached; comment not yet confirmed
 	Uncertain      Stage = "Uncertain"
+	Unfinished     Stage = "Unfinished" // saved while writing; never published until the user reviews it again
 )
 
 // artifactName gives each addition to an existing issue its own report artifact.
@@ -199,6 +77,14 @@ func artifactName(d Draft) string {
 		return "systemd-report-" + d.ReportID + ".json"
 	}
 	return "systemd-report.json"
+}
+
+// shotsArtifactName names the Markdown artifact that holds the uploaded screenshots.
+func shotsArtifactName(d Draft) string {
+	if d.Mode == Confirm || d.Mode == Update {
+		return "screenshots-" + d.ReportID + ".md"
+	}
+	return "screenshots.md"
 }
 
 // Saved is the on-disk state of one draft.
@@ -210,6 +96,8 @@ type Saved struct {
 	GistURL   string
 	IssueURL  string
 	StartedAt time.Time
+	// ShotsArtifact is set once the screenshots artifact exists; otherwise they go in a comment.
+	ShotsArtifact bool `json:",omitempty"`
 	// Digest covers the reviewed draft (screenshot bytes included); Resume refuses a draft edited on disk.
 	// Empty for drafts saved before it existed, which are trusted.
 	Digest string `json:",omitempty"`
@@ -220,77 +108,59 @@ var ErrDraftChanged = errors.New("it was not published. Discard it from Drafts a
 
 var ErrNotSignedIn = errors.New("gh is not signed in; run `gh auth login`")
 
-// Repos are the image repos that accept reports. A machine reports only to the repo of the image it runs.
-var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah"}
+// Repos are the repositories that accept reports; the first two are Bluefin image repositories.
+var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah", "tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift"}
 
-func RunGH(ctx context.Context, stdin []byte, args ...string) ([]byte, []byte, error) {
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
+// ErrUnfinished means a draft was saved before review, so it must be reopened and reviewed, not resumed.
+var ErrUnfinished = errors.New("this report was saved unfinished. Open it from Drafts to keep writing")
+
+// SaveUnfinished stores d as an Unfinished draft under d.ReportID, replacing an earlier save of
+// the same report, and returns the saved screenshot copies. It never touches GitHub and refuses
+// to overwrite a report that was reviewed.
+func SaveUnfinished(stateDir string, d Draft) ([]string, error) {
+	if d.ReportID == "" || strings.ContainsAny(d.ReportID, `/\.`) {
+		return nil, fmt.Errorf("bad report id %q", d.ReportID)
 	}
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	return out.Bytes(), errb.Bytes(), err
+	dir := filepath.Join(stateDir, d.ReportID)
+	s, err := load(filepath.Join(dir, "state.json"))
+	switch {
+	case err == nil && s.Stage != Unfinished:
+		return nil, fmt.Errorf("report %s is already being published", d.ReportID)
+	case err != nil && !errors.Is(err, os.ErrNotExist):
+		return nil, err
+	}
+	shotDir := filepath.Join(dir, "screenshots")
+	var keep, fresh []string
+	for _, p := range d.Screenshots {
+		switch {
+		case filepath.Dir(p) != shotDir:
+			fresh = append(fresh, p)
+		case fileExists(p): // a missing copy means the draft was discarded meanwhile; drop it
+			keep = append(keep, p) // already a draft copy; do not lossy-encode it twice
+		}
+	}
+	if err := checkScreenshots(fresh); err != nil {
+		return nil, err
+	}
+	copies, err := copyScreenshots(shotDir, fresh, keep)
+	if err != nil {
+		return nil, err
+	}
+	d.Screenshots = append(keep, copies...)
+	d.Attachment = nil
+	started := time.Now().UTC()
+	if s != nil {
+		started = s.StartedAt
+	}
+	if err := save(stateDir, &Saved{ReportID: d.ReportID, Stage: Unfinished, Draft: d, StartedAt: started}); err != nil {
+		return nil, err
+	}
+	return d.Screenshots, nil
 }
 
-type StreamExec func(ctx context.Context, stdin []byte, onStderr func(line string), args ...string) error
-
-// RunGHStream runs gh, feeding every stdout/stderr line to onLine as it arrives.
-func RunGHStream(ctx context.Context, stdin []byte, onLine func(string), args ...string) error {
-	cmd := exec.CommandContext(ctx, "gh", args...)
-	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
-	}
-	r, w := io.Pipe()
-	cmd.Stdout, cmd.Stderr = w, w
-	done := make(chan struct{})
-	go func() {
-		sc := bufio.NewScanner(r)
-		for sc.Scan() {
-			onLine(sc.Text())
-		}
-		io.Copy(io.Discard, r)
-		close(done)
-	}()
-	err := cmd.Run()
-	w.Close()
-	<-done
-	return err
-}
-
-var (
-	codeRe = regexp.MustCompile(`\b[A-Z0-9]{4}-[A-Z0-9]{4}\b`)
-	urlRe  = regexp.MustCompile(`https://\S+`)
-)
-
-// SignIn runs gh's device-code web login and reports the one-time code and URL once.
-// Non-TTY gh prints "! First copy your one-time code: XXXX-XXXX" then
-// "Open this URL to continue in your web browser: https://github.com/login/device".
-func SignIn(ctx context.Context, gh StreamExec, onCode func(code, url string)) error {
-	var mu sync.Mutex
-	var code string
-	sent := false
-	send := func(url string) {
-		if !sent && code != "" {
-			sent = true
-			onCode(code, url)
-		}
-	}
-	err := gh(ctx, nil, func(line string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if code == "" && strings.Contains(strings.ToLower(line), "code") {
-			code = codeRe.FindString(line)
-		}
-		if u := urlRe.FindString(line); u != "" {
-			send(u)
-		}
-	}, "auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--skip-ssh-key")
-	mu.Lock()
-	send("https://github.com/login/device")
-	mu.Unlock()
-	return err
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 // Discard deletes a local draft; it never touches GitHub.
@@ -303,7 +173,7 @@ func Discard(stateDir, reportID string) error {
 
 // Route returns the repo for the running image's IMAGE_ID, or "" when the image has no report repo.
 func Route(imageID string) string {
-	for _, r := range Repos {
+	for _, r := range Repos[:2] {
 		if name := strings.TrimPrefix(r, "projectbluefin/"); imageID == name || strings.HasPrefix(imageID, name+"-") {
 			return r
 		}
@@ -355,21 +225,9 @@ func validateDraft(d Draft) error {
 	return nil
 }
 
-func authenticatedAccount(ctx context.Context, gh Exec) (string, error) {
-	out, _, err := gh(ctx, nil, "api", "user", "--jq", ".login")
-	if err != nil {
-		return "", err
-	}
-	account := strings.TrimSpace(string(out))
-	if account == "" {
-		return "", ErrNotSignedIn
-	}
-	return account, nil
-}
-
 func Submit(ctx context.Context, gh Exec, stateDir string, d Draft) (Result, error) {
 	if !slices.Contains(Repos, d.Repo) {
-		return Result{}, fmt.Errorf("refusing to publish to %q: not an image repo that accepts reports", d.Repo)
+		return Result{}, fmt.Errorf("refusing to publish to %q: not a repository that accepts reports", d.Repo)
 	}
 	if d.Mode == Confirm || d.Mode == Update {
 		n, err := ParseIssueRef(d.Repo, d.IssueRef)
@@ -431,7 +289,7 @@ func Submit(ctx context.Context, gh Exec, stateDir string, d Draft) (Result, err
 			return Result{}, fmt.Errorf("issue #%s was opened by %s, but %s is signed in. Only the original reporter can add an update; use Confirm Existing Issue instead", d.IssueRef, author, account)
 		}
 	}
-	shots, err := copyScreenshots(filepath.Join(stateDir, d.ReportID, "screenshots"), d.Screenshots)
+	shots, err := copyScreenshots(filepath.Join(stateDir, d.ReportID, "screenshots"), d.Screenshots, nil)
 	if err != nil {
 		return Result{}, err
 	}
@@ -452,8 +310,11 @@ func Resume(ctx context.Context, gh Exec, stateDir, reportID string) (Result, er
 	if err != nil {
 		return Result{}, err
 	}
+	if s.Stage == Unfinished {
+		return Result{}, ErrUnfinished
+	}
 	if !slices.Contains(Repos, s.Draft.Repo) { // drafts saved under older routing
-		return Result{}, fmt.Errorf("refusing to publish to %q: not an image repo that accepts reports", s.Draft.Repo)
+		return Result{}, fmt.Errorf("refusing to publish to %q: not a repository that accepts reports", s.Draft.Repo)
 	}
 	if s.Stage != Published && s.Digest != "" {
 		got, err := digest(s.Draft)
@@ -539,295 +400,6 @@ func digest(d Draft) (string, error) {
 		h.Write(data)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// lookup decides from GitHub what an interrupted write actually did. It uses REST
-// list endpoints (consistent) rather than search (lagging index), so "not found"
-// really means not created and the stage before the write is retried.
-func lookup(ctx context.Context, gh Exec, s *Saved) error {
-	since := ""
-	if !s.StartedAt.IsZero() {
-		since = "&since=" + s.StartedAt.Add(-5*time.Minute).UTC().Format(time.RFC3339)
-	}
-	find := func(path, jq string) (string, error) {
-		out, _, err := gh(ctx, nil, "api", "--paginate", path, "--jq", jq)
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]), nil
-	}
-	if s.IssueURL != "" { // the issue exists; only the fallback gist is in doubt
-		url, err := find("gists?per_page=100"+since,
-			fmt.Sprintf(`.[] | select(.description == "bluefin-report %s") | .html_url`, s.ReportID))
-		if err != nil {
-			return err
-		}
-		s.GistURL, s.Stage = url, GistCreated
-		if url == "" {
-			s.Stage = GistPending
-		}
-		return nil
-	}
-	s.Stage = Reviewed
-	marker := fmt.Sprintf(`.[] | select(.body // "" | contains("bluefin-report-id: %s")) | .html_url`, s.ReportID)
-	var path string
-	if s.Draft.Mode == Confirm || s.Draft.Mode == Update {
-		path = fmt.Sprintf("repos/%s/issues/%s/comments?per_page=100%s", s.Draft.Repo, s.Draft.IssueRef, since)
-	} else {
-		// creator=@me is not documented for this endpoint; use the real login. Unbound legacy drafts look it up.
-		creator := s.Account
-		if creator == "" {
-			var err error
-			if creator, err = authenticatedAccount(ctx, gh); err != nil {
-				return err
-			}
-		}
-		path = fmt.Sprintf("repos/%s/issues?creator=%s&state=all&per_page=100%s", s.Draft.Repo, creator, since)
-	}
-	url, err := find(path, marker)
-	if err != nil {
-		return err
-	}
-	if url != "" {
-		s.IssueURL, s.Stage = url, Published
-		if s.Draft.Mode == NewIssue {
-			s.Stage = IssueCreated
-		}
-	}
-	return nil
-}
-
-func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
-	d := s.Draft
-	name := artifactName(d)
-	if (d.Mode == Confirm || d.Mode == Update) && s.Stage == Reviewed { // existing issue: attach directly
-		s.IssueURL, s.Stage = "https://github.com/"+d.Repo+"/issues/"+d.IssueRef, LabelsDone
-	}
-	step := func(pending, done Stage, stdin []byte, args ...string) (string, error) {
-		s.Stage = pending
-		if err := save(dir, s); err != nil {
-			return "", err
-		}
-		out, errb, err := gh(ctx, stdin, args...)
-		if err != nil {
-			// Any failure may have happened after GitHub accepted the write (timeout, killed gh):
-			// only a lookup can tell, so never assume nothing was created.
-			s.Stage = Uncertain
-			save(dir, s)
-			return "", fmt.Errorf("gh %s: %w: %s", args[0], err, strings.TrimSpace(string(errb)))
-		}
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		s.Stage = done
-		return lines[len(lines)-1], nil
-	}
-	fresh, labeled := false, false // labels known only when the issue was created in this run
-	if s.Stage == Reviewed {
-		body := issueBody(d)
-		// REST create: labels/type are silently dropped for non-maintainers instead of failing the create.
-		args := []string{"api", "--method", "POST", "repos/" + d.Repo + "/issues", "-f", "title=" + d.Title,
-			"-F", "body=@-", "-f", "labels[]=kind/bug"}
-		if d.Area != "" {
-			args = append(args, "-f", "labels[]=area/"+d.Area)
-		}
-		args = append(args, "-f", "type=Bug", "--jq", `.html_url + " " + ([.labels[].name]|join(","))`)
-		done := IssueCreated
-		out, err := step(IssuePending, done, []byte(body), args...)
-		if err != nil {
-			return Result{}, err
-		}
-		url, labels, _ := strings.Cut(out, " ")
-		s.IssueURL, fresh, labeled = url, true, hasLabels(d, strings.Split(labels, ","))
-		if err := save(dir, s); err != nil {
-			return Result{}, err
-		}
-	}
-	r := Result{IssueURL: s.IssueURL, GistURL: s.GistURL}
-	n := s.IssueURL[strings.LastIndex(s.IssueURL, "/")+1:]
-	// Issue already exists from here on: failures are warnings, and the next Resume re-checks before writing.
-	warn := func(what string, err error, errb []byte) (Result, error) {
-		return r, fmt.Errorf("issue filed at %s, but %s failed (retry to finish): %w: %s", s.IssueURL, what, err, strings.TrimSpace(string(errb)))
-	}
-	final := Published
-	if len(d.Screenshots) > 0 && d.Mode == NewIssue {
-		final = ShotsPending
-	}
-	if d.Mode == Confirm || d.Mode == Update {
-		final = CommentPending
-	}
-	freshShots := false // ShotsPending reached in this run: no comment can exist yet
-	if s.Stage == IssueCreated {
-		if !fresh {
-			out, errb, err := gh(ctx, nil, "issue", "view", n, "-R", d.Repo, "--json", "labels", "--jq", "[.labels[].name]|join(\",\")")
-			if err != nil {
-				return warn("reading labels", err, errb)
-			}
-			labeled = hasLabels(d, strings.Split(strings.TrimSpace(string(out)), ","))
-		}
-		posted := false
-		if !labeled && !fresh {
-			login, errb, err := gh(ctx, nil, "api", "user", "--jq", ".login")
-			if err != nil {
-				return warn("reading user", err, errb)
-			}
-			out, errb, err := gh(ctx, nil, "api", "--paginate", fmt.Sprintf("repos/%s/issues/%s/comments?per_page=100", d.Repo, n),
-				"--jq", fmt.Sprintf(`.[] | select(.user.login == %q and (.body | startswith("/kind bug"))) | .id`, strings.TrimSpace(string(login))))
-			if err != nil {
-				return warn("reading comments", err, errb)
-			}
-			posted = strings.TrimSpace(string(out)) != ""
-		}
-		if !labeled && !posted {
-			// Prow applies /kind and /area for any commenter.
-			cmd := "/kind bug"
-			if d.Area != "" {
-				cmd += "\n/area " + d.Area
-			}
-			if _, errb, err := gh(ctx, []byte(cmd), "issue", "comment", "--repo", d.Repo, "--body-file", "-", "--", n); err != nil {
-				return warn("labeling", err, errb)
-			}
-		}
-		s.Stage = LabelsDone
-		if err := save(dir, s); err != nil {
-			return r, err
-		}
-	}
-	if s.Stage == LabelsDone {
-		// The full report goes on the issue as a fenced-JSON artifact. Only when GitHub or an older gh
-		// refuses artifacts outright (no permission, preview unavailable) does it fall back to a secret
-		// gist linked in a comment; transient failures leave the draft pending for Resume.
-		exists, refused := false, false
-		if d.Attachment != nil && !fresh {
-			out, errb, err := gh(ctx, nil, "issue", "artifact", "list", n, "-R", d.Repo, "--json", "name", "--jq", ".[].name")
-			if err != nil && !artifactsRefused(errb) {
-				return warn("reading artifacts", err, errb)
-			}
-			refused = err != nil
-			exists = slices.Contains(strings.Split(strings.TrimSpace(string(out)), "\n"), name)
-		}
-		if d.Attachment != nil && !exists && !refused {
-			doc := slices.Concat([]byte("```json\n"), d.Attachment, []byte("\n```\n"))
-			if _, errb, err := gh(ctx, doc, "issue", "artifact", "create", n, "--body-file", "-", "--name", name, "-R", d.Repo); err != nil {
-				if !artifactsRefused(errb) {
-					return warn("attaching the report", err, errb)
-				}
-				refused = true
-			}
-		}
-		s.Stage, freshShots = final, true
-		if refused {
-			s.Stage = GistPending
-		}
-		if err := save(dir, s); err != nil {
-			return r, err
-		}
-	}
-	freshGist := false
-	if s.Stage == GistPending {
-		url, err := step(GistPending, GistCreated, d.Attachment, "gist", "create",
-			"--desc", "bluefin-report "+s.ReportID, "--filename", name, "-")
-		if err != nil {
-			return r, fmt.Errorf("issue filed at %s, but attaching the report failed (retry to finish): %w", s.IssueURL, err)
-		}
-		s.GistURL, r.GistURL, freshGist = url, url, true
-		if err := save(dir, s); err != nil {
-			return r, err
-		}
-	}
-	if s.Stage == GistCreated {
-		marker := "<!-- bluefin-report-id: " + s.ReportID + " -->"
-		posted := false
-		if !freshGist && d.Mode == NewIssue { // existing-issue modes link the gist in their one comment
-			out, errb, err := gh(ctx, nil, "api", "--paginate", fmt.Sprintf("repos/%s/issues/%s/comments?per_page=100", d.Repo, n),
-				"--jq", fmt.Sprintf(`.[] | select(.body // "" | contains(%q)) | .id`, marker))
-			if err != nil {
-				return warn("reading comments", err, errb)
-			}
-			posted = strings.TrimSpace(string(out)) != ""
-		}
-		if !posted && d.Mode == NewIssue {
-			if _, errb, err := gh(ctx, []byte("Full report: "+s.GistURL+"\n"+marker), "issue", "comment", "--repo", d.Repo, "--body-file", "-", "--", n); err != nil {
-				return warn("linking the report", err, errb)
-			}
-		}
-		s.Stage, freshShots = final, true
-		if err := save(dir, s); err != nil {
-			return r, err
-		}
-	}
-	if s.Stage == ShotsPending {
-		marker := "<!-- bluefin-report-screenshots: " + s.ReportID + " -->"
-		posted := false
-		if !freshShots {
-			out, errb, err := gh(ctx, nil, "api", "--paginate", fmt.Sprintf("repos/%s/issues/%s/comments?per_page=100", d.Repo, n),
-				"--jq", fmt.Sprintf(`.[] | select(.body // "" | contains(%q)) | .id`, marker))
-			if err != nil {
-				return warn("reading comments", err, errb)
-			}
-			posted = strings.TrimSpace(string(out)) != ""
-		}
-		if !posted {
-			args := append([]string{"issue", "comment", "--repo", d.Repo, "--body-file", "-"}, attachArgs(d.Screenshots)...)
-			if _, errb, err := gh(ctx, []byte("Screenshots\n"+marker), append(args, "--", n)...); err != nil {
-				return warn("uploading screenshots", err, errb)
-			}
-		}
-		s.Stage = Published
-		if err := save(dir, s); err != nil {
-			return r, err
-		}
-	}
-	if s.Stage == CommentPending {
-		marker := "<!-- bluefin-report-id: " + s.ReportID + " -->"
-		posted := false
-		if !freshShots {
-			out, errb, err := gh(ctx, nil, "api", "--paginate", fmt.Sprintf("repos/%s/issues/%s/comments?per_page=100", d.Repo, n),
-				"--jq", fmt.Sprintf(`.[] | select(.body // "" | contains(%q)) | .id`, marker))
-			if err != nil {
-				return warn("reading comments", err, errb)
-			}
-			posted = strings.TrimSpace(string(out)) != ""
-		}
-		if !posted {
-			body := d.Body
-			switch {
-			case s.GistURL != "":
-				body += "\n\nFull report: " + s.GistURL
-			case d.Attachment != nil:
-				body += "\n\nFull report: `" + name + "`, attached to this issue"
-			}
-			kind := "confirm"
-			if d.Mode == Update {
-				kind = "update"
-			}
-			body += "\n\n" + marker + "\n<!-- bluefin-report-" + kind + " -->"
-			args := append([]string{"issue", "comment", "--repo", d.Repo, "--body-file", "-"}, attachArgs(d.Screenshots)...)
-			if _, errb, err := gh(ctx, []byte(body), append(args, "--", n)...); err != nil {
-				return warn("commenting", err, errb)
-			}
-		}
-		s.Stage = Published
-		if err := save(dir, s); err != nil {
-			return r, err
-		}
-	}
-	return r, nil
-}
-
-// artifactsRefused reports a permanent refusal (permission, missing preview command), as opposed to
-// a network failure worth retrying.
-func artifactsRefused(stderr []byte) bool {
-	s := string(stderr)
-	for _, m := range []string{"HTTP 401", "HTTP 403", "HTTP 404", "HTTP 410", "HTTP 422", "unknown command", "Resource not accessible", "must have"} {
-		if strings.Contains(s, m) {
-			return true
-		}
-	}
-	return false
-}
-
-// hasLabels reports whether GitHub applied every label we asked for.
-func hasLabels(d Draft, got []string) bool {
-	return slices.Contains(got, "kind/bug") && (d.Area == "" || slices.Contains(got, "area/"+d.Area))
 }
 
 func save(dir string, s *Saved) error {

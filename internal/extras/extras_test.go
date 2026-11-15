@@ -114,3 +114,89 @@ func TestMarkdownEscapesFencesAndMarksEmpty(t *testing.T) {
 		t.Fatalf("markdown:\n%q\nwant:\n%q", md, want)
 	}
 }
+
+// byName stubs run by program name only, so tests don't pin flags.
+func byName(t *testing.T, out map[string]string) {
+	old := run
+	run = func(_ context.Context, name string, _ ...string) string { return out[name] }
+	t.Cleanup(func() { run = old })
+}
+
+func amdCard(t *testing.T, card string, files map[string]string) {
+	t.Helper()
+	for p, c := range files {
+		p = filepath.Join(Root, "sys/class/drm", card, "device", p)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(c+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Each part of a multi-part section sits under a header naming its source; a tool
+// that is missing (or printed nothing) leaves no orphaned header behind.
+func TestCollectJoinsPartsOmittingMissingTools(t *testing.T) {
+	Root = t.TempDir()
+	t.Cleanup(func() { Root = "/" })
+	byName(t, map[string]string{"journalctl": "j1\nj2", "lsblk": "NAME SIZE\nsda 1T"})
+	got := Collect(context.Background(), []string{"networkLog", "hardware"})
+	for key, bodies := range map[string][]string{"networkLog": {"j1\nj2"}, "hardware": {"NAME SIZE\nsda 1T"}} {
+		ps := strings.Split(got[key], "\n\n")
+		if len(ps) != len(bodies) {
+			t.Fatalf("%s: want %d parts, got %q", key, len(bodies), got[key])
+		}
+		for i, p := range ps {
+			head, body, _ := strings.Cut(p, "\n")
+			if !strings.HasPrefix(head, "$ ") || body != bodies[i] {
+				t.Fatalf("%s part %d: %q", key, i, p)
+			}
+		}
+	}
+	byName(t, nil)
+	if got := Collect(context.Background(), []string{"hardware"}); got["hardware"] != "" {
+		t.Fatalf("nothing available, got %q", got["hardware"])
+	}
+}
+
+// Ten sections share the 1 MiB attachment, so each is capped, keeping its newest
+// whole lines; otherwise opting into everything could leave no room for the report.
+func TestCollectCapsEachSection(t *testing.T) {
+	Root = t.TempDir()
+	t.Cleanup(func() { Root = "/" })
+	line := strings.Repeat("x", 99) + "\n"
+	byName(t, map[string]string{"lsblk": "oldest\n" + strings.Repeat(line, 1000) + "newest", "journalctl": "small"})
+	got := Collect(context.Background(), []string{"hardware", "bootErrors"})
+	h := got["hardware"]
+	if len(h) > MaxSection || !strings.HasSuffix(h, "newest") || strings.Contains(h, "oldest") || !strings.HasPrefix(h, "x") {
+		t.Fatalf("hardware: %d bytes, starts %q", len(h), h[:min(len(h), 20)])
+	}
+	if got["bootErrors"] != "small" {
+		t.Fatalf("small section changed: %q", got["bootErrors"])
+	}
+}
+
+func TestCollectAMDSysfs(t *testing.T) {
+	Root = t.TempDir()
+	t.Cleanup(func() { Root = "/" })
+	byName(t, nil)
+	amdCard(t, "card1", map[string]string{
+		"gpu_busy_percent": "6", "mem_info_vram_used": "1432150016", "mem_info_vram_total": "25753026560",
+		"mem_info_gtt_used": "82116608", "mem_info_gtt_total": "16369799168",
+		"hwmon/hwmon4/temp1_input": "46000", "hwmon/hwmon4/power1_average": "30000000",
+	})
+	// An APU: power1_input instead of power1_average, no GTT total.
+	amdCard(t, "card0", map[string]string{
+		"gpu_busy_percent": "0", "mem_info_vram_used": "536870912", "mem_info_vram_total": "2147483648",
+		"mem_info_gtt_used": "1", "hwmon/hwmon3/power1_input": "57647000",
+	})
+	amdCard(t, "card2", map[string]string{"gpu_busy_percent": "100"}) // no memory, no hwmon
+	amdCard(t, "card3", map[string]string{"uevent": "DRIVER=nvidia"}) // not amdgpu
+	amdCard(t, "card1-DP-1", map[string]string{"gpu_busy_percent": "1"})
+	_, body, _ := strings.Cut(Collect(context.Background(), []string{"hardware"})["hardware"], "\n")
+	want := "card0: busy 0%, VRAM 0.5 GiB / 2.0 GiB, power 58 W\n" +
+		"card1: busy 6%, VRAM 1.3 GiB / 24.0 GiB, GTT 0.1 GiB / 15.2 GiB, temp 46°C, power 30 W\n" +
+		"card2: busy 100%"
+	if body != want {
+		t.Fatalf("got\n%s\nwant\n%s", body, want)
+	}
+}

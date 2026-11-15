@@ -1,9 +1,20 @@
-.PHONY: build test run lint validate-data bump screenshots
+.PHONY: build test run lint validate-data bump screenshots pot mo data
 
 BUILD_DIR=build
 SCREENSHOT_DIR ?= $(BUILD_DIR)/screenshots
 PYTHON ?= python3
 export CGO_ENABLED=0
+
+# Translations (GNU gettext): po/POTFILES lists the files with translatable
+# text, po/LINGUAS the languages that have a po/<lang>.po.
+DOMAIN = bluefin-report
+POTFILES := $(shell cat po/POTFILES)
+LINGUAS := $(shell sed 's/#.*//' po/LINGUAS)
+DESKTOP = io.projectbluefin.Report.desktop
+METAINFO = io.projectbluefin.Report.metainfo.xml
+# Compiled catalogs; the app looks for them in locale/ beside its binary.
+# Release archives take them from ./locale (make mo LOCALEDIR=locale).
+LOCALEDIR ?= $(BUILD_DIR)/locale
 
 build:
 	go build -trimpath -o $(BUILD_DIR)/bluefin-report ./cmd/bluefin-report
@@ -30,6 +41,30 @@ validate-data:
 	@if command -v appstreamcli >/dev/null 2>&1; then \
 		appstreamcli validate --no-net data/io.projectbluefin.Report.metainfo.xml; \
 	else echo "==> skipping metainfo: appstreamcli not installed"; fi
+
+# Translation template. Needs GNU gettext 0.25 or newer, the first to read Go.
+XGETTEXT = xgettext --from-code=UTF-8 --add-comments=TRANSLATORS: --package-name=$(DOMAIN) \
+	--msgid-bugs-address=https://github.com/projectbluefin/bluefin-report/issues --output=po/$(DOMAIN).pot
+pot:
+	$(XGETTEXT) --language=Go --keyword --keyword=G --keyword=NG:1,2 --keyword=N $(filter %.go,$(POTFILES))
+	$(XGETTEXT) --join-existing $(filter-out %.go,$(POTFILES))
+
+mo: $(foreach l,$(LINGUAS),$(LOCALEDIR)/$(l)/LC_MESSAGES/$(DOMAIN).mo)
+
+$(LOCALEDIR)/%/LC_MESSAGES/$(DOMAIN).mo: po/%.po
+	@mkdir -p $(@D)
+	msgfmt --check --output-file=$@ $<
+
+# Desktop file and metainfo with every translation merged in.
+data: $(BUILD_DIR)/data/$(DESKTOP) $(BUILD_DIR)/data/$(METAINFO)
+
+$(BUILD_DIR)/data/$(DESKTOP): data/$(DESKTOP) po/LINGUAS $(LINGUAS:%=po/%.po)
+	@mkdir -p $(@D)
+	msgfmt --desktop --template=$< -d po --output-file=$@
+
+$(BUILD_DIR)/data/$(METAINFO): data/$(METAINFO) po/LINGUAS $(LINGUAS:%=po/%.po)
+	@mkdir -p $(@D)
+	msgfmt --xml --template=$< -d po --output-file=$@
 
 # Releases are cut deliberately, not per commit: YY.MM.N (scripts/next-version.sh).
 # Tag only what main ships, so release notes compare against the previous tag.

@@ -1,0 +1,7 @@
+data/io.projectbluefin.Report.desktop
+data/io.projectbluefin.Report.metainfo.xml
+internal/extras/extras.go
+internal/ui/compose.go
+internal/ui/drafts.go
+internal/ui/overview.go
+internal/ui/ui.go
