@@ -108,6 +108,24 @@ func TestRoute(t *testing.T) {
 			t.Errorf("%s not rejected before network", repo)
 		}
 	}
+	for _, repo := range []string{"tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift"} {
+		f := newFake()
+		f.out["api --method POST repos/"+repo+"/issues"] = "https://github.com/" + repo + "/issues/1\n"
+		f.out["issue artifact create 1 --body-file - --name systemd-report.json -R "+repo] = "\n"
+		d := Draft{Repo: repo, Title: "t", Body: "b", Attachment: []byte("{}"), Area: "installer"}
+		if _, err := Submit(context.Background(), f.exec, t.TempDir(), d); err != nil {
+			t.Errorf("Submit to allowed repo %s failed: %v", repo, err)
+		}
+		if strings.HasPrefix(repo, "tuna-os/") {
+			createCall := f.calls[1] // call 0 is auth status, 1 is issue create
+			if strings.Contains(createCall, "labels[]") || strings.Contains(createCall, "type=Bug") {
+				t.Errorf("non-Prow repo %s received Prow labels in create call: %s", repo, createCall)
+			}
+			if f.count("issue comment") != 0 {
+				t.Errorf("non-Prow repo %s posted Prow slash-command comment", repo)
+			}
+		}
+	}
 }
 
 const artifact = "issue artifact create 7 --body-file - --name systemd-report.json -R projectbluefin/dakota"

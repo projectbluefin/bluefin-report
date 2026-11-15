@@ -220,8 +220,8 @@ var ErrDraftChanged = errors.New("it was not published. Discard it from Drafts a
 
 var ErrNotSignedIn = errors.New("gh is not signed in; run `gh auth login`")
 
-// Repos are the image repos that accept reports. A machine reports only to the repo of the image it runs.
-var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah"}
+// Repos are the repositories that accept reports; the first two are Bluefin image repositories.
+var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah", "tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift"}
 
 func RunGH(ctx context.Context, stdin []byte, args ...string) ([]byte, []byte, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
@@ -303,7 +303,7 @@ func Discard(stateDir, reportID string) error {
 
 // Route returns the repo for the running image's IMAGE_ID, or "" when the image has no report repo.
 func Route(imageID string) string {
-	for _, r := range Repos {
+	for _, r := range Repos[:2] {
 		if name := strings.TrimPrefix(r, "projectbluefin/"); imageID == name || strings.HasPrefix(imageID, name+"-") {
 			return r
 		}
@@ -369,7 +369,7 @@ func authenticatedAccount(ctx context.Context, gh Exec) (string, error) {
 
 func Submit(ctx context.Context, gh Exec, stateDir string, d Draft) (Result, error) {
 	if !slices.Contains(Repos, d.Repo) {
-		return Result{}, fmt.Errorf("refusing to publish to %q: not an image repo that accepts reports", d.Repo)
+		return Result{}, fmt.Errorf("refusing to publish to %q: not a repository that accepts reports", d.Repo)
 	}
 	if d.Mode == Confirm || d.Mode == Update {
 		n, err := ParseIssueRef(d.Repo, d.IssueRef)
@@ -453,7 +453,7 @@ func Resume(ctx context.Context, gh Exec, stateDir, reportID string) (Result, er
 		return Result{}, err
 	}
 	if !slices.Contains(Repos, s.Draft.Repo) { // drafts saved under older routing
-		return Result{}, fmt.Errorf("refusing to publish to %q: not an image repo that accepts reports", s.Draft.Repo)
+		return Result{}, fmt.Errorf("refusing to publish to %q: not a repository that accepts reports", s.Draft.Repo)
 	}
 	if s.Stage != Published && s.Digest != "" {
 		got, err := digest(s.Draft)
@@ -620,23 +620,28 @@ func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
 		s.Stage = done
 		return lines[len(lines)-1], nil
 	}
-	fresh, labeled := false, false // labels known only when the issue was created in this run
+	usesProw := strings.HasPrefix(d.Repo, "projectbluefin/")
+	fresh, labeled := false, !usesProw // labels known only when the issue was created in this run
 	if s.Stage == Reviewed {
 		body := issueBody(d)
 		// REST create: labels/type are silently dropped for non-maintainers instead of failing the create.
 		args := []string{"api", "--method", "POST", "repos/" + d.Repo + "/issues", "-f", "title=" + d.Title,
-			"-F", "body=@-", "-f", "labels[]=kind/bug"}
-		if d.Area != "" {
-			args = append(args, "-f", "labels[]=area/"+d.Area)
+			"-F", "body=@-"}
+		if usesProw {
+			args = append(args, "-f", "labels[]=kind/bug")
+			if d.Area != "" {
+				args = append(args, "-f", "labels[]=area/"+d.Area)
+			}
+			args = append(args, "-f", "type=Bug")
 		}
-		args = append(args, "-f", "type=Bug", "--jq", `.html_url + " " + ([.labels[].name]|join(","))`)
+		args = append(args, "--jq", `.html_url + " " + ([.labels[].name]|join(","))`)
 		done := IssueCreated
 		out, err := step(IssuePending, done, []byte(body), args...)
 		if err != nil {
 			return Result{}, err
 		}
 		url, labels, _ := strings.Cut(out, " ")
-		s.IssueURL, fresh, labeled = url, true, hasLabels(d, strings.Split(labels, ","))
+		s.IssueURL, fresh, labeled = url, true, !usesProw || hasLabels(d, strings.Split(labels, ","))
 		if err := save(dir, s); err != nil {
 			return Result{}, err
 		}
@@ -656,7 +661,7 @@ func run(ctx context.Context, gh Exec, dir string, s *Saved) (Result, error) {
 	}
 	freshShots := false // ShotsPending reached in this run: no comment can exist yet
 	if s.Stage == IssueCreated {
-		if !fresh {
+		if !fresh && usesProw {
 			out, errb, err := gh(ctx, nil, "issue", "view", n, "-R", d.Repo, "--json", "labels", "--jq", "[.labels[].name]|join(\",\")")
 			if err != nil {
 				return warn("reading labels", err, errb)

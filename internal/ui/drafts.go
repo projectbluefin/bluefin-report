@@ -25,7 +25,7 @@ func (u *ui) publish() {
 	d := publish.Draft{
 		ReportID: u.reportID,
 		Mode:     u.mode,
-		Repo:     u.repoName,
+		Repo:     u.selectedRepo(),
 		Body:     bufText(u.issueText),
 	}
 	if d.Mode == publish.NewIssue {
