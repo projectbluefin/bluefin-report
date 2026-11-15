@@ -27,12 +27,17 @@ import (
 
 func (u *ui) buildCompose() {
 	g := adw.NewPreferencesGroup()
-	u.repo = adw.NewActionRow()
+	u.repo = adw.NewComboRow()
 	u.repo.SetTitle(i18n.G("Project"))
-	u.repo.AddCssClass("property")
-	u.repo.SetSubtitleSelectable(true)
+	names := make([]string, len(projects))
+	for i, p := range projects {
+		names[i] = p.name
+	}
+	u.repo.SetModel(gtk.NewStringList(names))
+	u.repo.SetSelected(0)
 	g.Add(&u.repo.Widget)
 	sync := hold(func(gobject.Object, uintptr) { u.syncReview() })
+	u.repo.ConnectNotify(sync)
 
 	u.title = adw.NewEntryRow()
 	u.title.SetTitle(i18n.G("Title"))
@@ -187,11 +192,24 @@ func (u *ui) syncShots() {
 	}
 }
 
+func (u *ui) selectedRepo() string {
+	if u.mode == publish.NewIssue {
+		if repo := projects[u.repo.GetSelected()].repo; repo != "" {
+			return repo
+		}
+	}
+	return u.repoName
+}
+
 // syncReview enables Review once the snapshot is ready and the mode's
 // required field is filled.
 func (u *ui) syncReview() {
 	if u.reviewBtn == nil {
 		return // notify fires while the page is still being built
+	}
+	repo := u.selectedRepo()
+	if u.repo.GetSubtitle() != repo {
+		u.repo.SetSubtitle(repo)
 	}
 	ok := strings.TrimSpace(u.title.GetText()) != ""
 	msg := ""
@@ -251,6 +269,7 @@ func (u *ui) openCompose(m publish.Mode) {
 	for _, w := range u.newOnly {
 		w.SetVisible(newIssue)
 	}
+	u.repo.SetSensitive(newIssue)
 	u.issueRef.SetVisible(!newIssue)
 	desc, page := i18n.G("What Happened?"), i18n.G("New Issue")
 	switch m {
@@ -262,7 +281,6 @@ func (u *ui) openCompose(m publish.Mode) {
 	u.descGroup.SetTitle(desc)
 	a11yLabel(&u.descView.Widget, desc)
 	u.composePage.SetTitle(page)
-	u.repo.SetSubtitle(u.repoName)
 	u.syncReview()
 	u.nav.PushByTag("compose")
 }
@@ -277,6 +295,7 @@ func (u *ui) resetCompose() {
 	u.attach.SetActive(true)
 	u.includeUser.SetActive(false)
 	u.queue.SetSelected(0)
+	u.repo.SetSelected(0)
 	u.area.SetSelected(0)
 	for _, r := range u.optIn {
 		r.SetActive(false)
@@ -479,9 +498,9 @@ func (u *ui) showReview(vals map[string]string) {
 	}
 	u.shotsGroup.SetDescription(strings.Join(names, "\n"))
 	u.shotsGroup.SetVisible(len(u.shots) > 0)
-	u.consentGroup.SetDescription("")
+	u.consentGroup.SetDescription("Publish to " + u.selectedRepo())
 	if len(u.shots) > 0 {
-		u.consentGroup.SetDescription(fmt.Sprintf(i18n.NG(
+		u.consentGroup.SetDescription(u.consentGroup.GetDescription() + "\n" + fmt.Sprintf(i18n.NG(
 			"%d screenshot becomes public. Metadata is stripped, but image content is not scrubbed.",
 			"%d screenshots become public. Metadata is stripped, but image content is not scrubbed.",
 			len(u.shots)), len(u.shots)))

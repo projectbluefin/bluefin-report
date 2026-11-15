@@ -172,7 +172,7 @@ Read `IMAGE_ID` from the Basic OS-release metrics. A machine reports only to the
 | `utah`, `utah-*` | `projectbluefin/utah` |
 | anything else | none: Report a Problem and Confirm Existing Issue are disabled, with the reason shown |
 
-The repo is shown, not chosen. `publish.Submit` accepts only these two repos and rejects anything else before any network call. One check, one place.
+The repo defaults to the running image's repo for Bluefin, with explicit options in New Issue for ISO / Installer (`tuna-os/bootc-installer`), Compass (`tuna-os/compass`), and Control Center (`projectbluefin/chairlift`). `publish.Submit` accepts only configured report destinations and rejects anything else before any network call. One check, one place.
 
 ### Transport
 Use `gh` (Homebrew) rather than a token store of our own. Beta 1 corrections:

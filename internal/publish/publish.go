@@ -108,8 +108,8 @@ var ErrDraftChanged = errors.New("it was not published. Discard it from Drafts a
 
 var ErrNotSignedIn = errors.New("gh is not signed in; run `gh auth login`")
 
-// Repos are the image repos that accept reports. A machine reports only to the repo of the image it runs.
-var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah"}
+// Repos are the repositories that accept reports; the first two are Bluefin image repositories.
+var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah", "tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift"}
 
 // ErrUnfinished means a draft was saved before review, so it must be reopened and reviewed, not resumed.
 var ErrUnfinished = errors.New("this report was saved unfinished. Open it from Drafts to keep writing")
@@ -173,7 +173,7 @@ func Discard(stateDir, reportID string) error {
 
 // Route returns the repo for the running image's IMAGE_ID, or "" when the image has no report repo.
 func Route(imageID string) string {
-	for _, r := range Repos {
+	for _, r := range Repos[:2] {
 		if name := strings.TrimPrefix(r, "projectbluefin/"); imageID == name || strings.HasPrefix(imageID, name+"-") {
 			return r
 		}
@@ -227,7 +227,7 @@ func validateDraft(d Draft) error {
 
 func Submit(ctx context.Context, gh Exec, stateDir string, d Draft) (Result, error) {
 	if !slices.Contains(Repos, d.Repo) {
-		return Result{}, fmt.Errorf("refusing to publish to %q: not an image repo that accepts reports", d.Repo)
+		return Result{}, fmt.Errorf("refusing to publish to %q: not a repository that accepts reports", d.Repo)
 	}
 	if d.Mode == Confirm || d.Mode == Update {
 		n, err := ParseIssueRef(d.Repo, d.IssueRef)
@@ -314,7 +314,7 @@ func Resume(ctx context.Context, gh Exec, stateDir, reportID string) (Result, er
 		return Result{}, ErrUnfinished
 	}
 	if !slices.Contains(Repos, s.Draft.Repo) { // drafts saved under older routing
-		return Result{}, fmt.Errorf("refusing to publish to %q: not an image repo that accepts reports", s.Draft.Repo)
+		return Result{}, fmt.Errorf("refusing to publish to %q: not a repository that accepts reports", s.Draft.Repo)
 	}
 	if s.Stage != Published && s.Digest != "" {
 		got, err := digest(s.Draft)
