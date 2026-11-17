@@ -1,6 +1,6 @@
 {
-  "source_commit": "53d1ce010363f3343cb4628415eade862a68ae52",
-  "binary_sha256": "33f8fcbdcb4eeaaa4dd26c5e23560e2a51507977558a901752835d1af4abbb29",
+  "source_commit": "ba768bc75c27f60b04340ecf03cfb6ed45e353af",
+  "binary_sha256": "937dcd64212f21e8b7061e25c8b55ab420ad663c0a31b501b4947a8fb095b16a",
   "collector_sha256": "ddbe5bd5cf64a9a9e165319461d45158534fc732b966049a9a52bc8e4b4a93af",
   "telemetry": "Repository fixtures only (systemd-report telemetry and hardware/image identity); not host data. Application ran with --dry-run.",
   "viewport": {
@@ -23,6 +23,6 @@
   "screenshots": {
     "screenshot-overview.png": "7250fc0f64a5949227261abcffc1601f35796c53a0a021f7e1fc1ad005ab9ad6",
     "screenshot-metrics.png": "959c7994181a2d0601e1b3142992f5ea95d6a255b3f371b4f6913f5ef63012d8",
-    "screenshot-review.png": "dc21f3e0305e60054d3c1d09cb5159a524f25742731726a839db4939aa5f909a"
+    "screenshot-review.png": "b0865ba5c287192fc98fca3453c1785ac33e0092d48429d269e0c865045ba4ee"
   }
 }
