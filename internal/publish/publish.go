@@ -108,8 +108,8 @@ var ErrDraftChanged = errors.New("it was not published. Discard it from Drafts a
 
 var ErrNotSignedIn = errors.New("gh is not signed in; run `gh auth login`")
 
-// Repos are the repositories that accept reports; the first two are Bluefin image repositories.
-var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah", "tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift"}
+// Repos are the repositories that accept reports; the first three are Bluefin image repositories.
+var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah", "ublue-os/bluefin", "tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift"}
 
 // ErrUnfinished means a draft was saved before review, so it must be reopened and reviewed, not resumed.
 var ErrUnfinished = errors.New("this report was saved unfinished. Open it from Drafts to keep writing")
@@ -173,10 +173,14 @@ func Discard(stateDir, reportID string) error {
 
 // Route returns the repo for the running image's IMAGE_ID, or "" when the image has no report repo.
 func Route(imageID string) string {
-	for _, r := range Repos[:2] {
-		if name := strings.TrimPrefix(r, "projectbluefin/"); imageID == name || strings.HasPrefix(imageID, name+"-") {
-			return r
-		}
+	switch {
+	case imageID == "dakota" || strings.HasPrefix(imageID, "dakota-"):
+		return "projectbluefin/dakota"
+	case imageID == "utah" || strings.HasPrefix(imageID, "utah-"):
+		return "projectbluefin/utah"
+	case imageID == "bluefin" || imageID == "bluefin-nvidia-open" ||
+		imageID == "bluefin-dx" || imageID == "bluefin-dx-nvidia-open": // Bluefin and Bluefin DX; bluefin-lts is a separate image
+		return "ublue-os/bluefin"
 	}
 	return ""
 }

@@ -219,8 +219,8 @@ func (u *ui) loaded(s snapshot.Snapshot, err error) {
 		w.SetSensitive(u.repoName != "")
 	}
 	if u.repoName == "" {
-		// TRANSLATORS: %s is the image name, e.g. bluefin. Dakota and Utah are image names.
-		u.reportDesc.SetText(fmt.Sprintf(i18n.G("Reporting isn't available for this image (%s). Only Dakota and Utah accept reports."), u.sum.ImageID))
+		// TRANSLATORS: %s is the image name, e.g. bluefin. Bluefin, Dakota and Utah are image names.
+		u.reportDesc.SetText(fmt.Sprintf(i18n.G("Reporting isn't available for this image (%s). Only Bluefin, Dakota and Utah accept reports."), u.sum.ImageID))
 	} else {
 		// TRANSLATORS: %s is a GitHub repository, e.g. projectbluefin/dakota.
 		u.reportDesc.SetText(fmt.Sprintf(i18n.G("Describe what went wrong and send it to the %s maintainers with a privacy-checked system report. You review everything before it's published."), u.repoName))

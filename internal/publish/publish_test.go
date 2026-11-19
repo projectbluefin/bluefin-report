@@ -96,7 +96,9 @@ func TestRoute(t *testing.T) {
 	for id, want := range map[string]string{
 		"dakota": "projectbluefin/dakota", "dakota-gaming": "projectbluefin/dakota", "dakota-nvidia": "projectbluefin/dakota",
 		"utah": "projectbluefin/utah", "utah-dx": "projectbluefin/utah",
-		"bluefin": "", "bluefin-lts": "", "dakotax": "", "": "",
+		"bluefin": "ublue-os/bluefin", "bluefin-nvidia-open": "ublue-os/bluefin",
+		"bluefin-dx": "ublue-os/bluefin", "bluefin-dx-nvidia-open": "ublue-os/bluefin",
+		"bluefin-lts": "", "dakotax": "", "": "",
 	} {
 		if got := Route(id); got != want {
 			t.Errorf("Route(%q)=%q, want %q", id, got, want)
@@ -108,7 +110,7 @@ func TestRoute(t *testing.T) {
 			t.Errorf("%s not rejected before network", repo)
 		}
 	}
-	for _, repo := range []string{"tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift"} {
+	for _, repo := range []string{"tuna-os/bootc-installer", "tuna-os/compass", "ublue-os/bluefin", "projectbluefin/chairlift"} {
 		f := newFake()
 		f.out["api --method POST repos/"+repo+"/issues"] = "https://github.com/" + repo + "/issues/1\n"
 		f.out["issue artifact create 1 --body-file - --name systemd-report.json -R "+repo] = "\n"
@@ -116,7 +118,7 @@ func TestRoute(t *testing.T) {
 		if _, err := Submit(context.Background(), f.exec, t.TempDir(), d); err != nil {
 			t.Errorf("Submit to allowed repo %s failed: %v", repo, err)
 		}
-		if strings.HasPrefix(repo, "tuna-os/") {
+		if !strings.HasPrefix(repo, "projectbluefin/") {
 			createCall := f.calls[1] // call 0 is auth status, 1 is issue create
 			if strings.Contains(createCall, "labels[]") || strings.Contains(createCall, "type=Bug") {
 				t.Errorf("non-Prow repo %s received Prow labels in create call: %s", repo, createCall)

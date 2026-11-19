@@ -170,6 +170,7 @@ Read `IMAGE_ID` from the Basic OS-release metrics. A machine reports only to the
 | :--- | :--- |
 | `dakota`, `dakota-*` | `projectbluefin/dakota` |
 | `utah`, `utah-*` | `projectbluefin/utah` |
+| `bluefin`, `bluefin-nvidia-open`, `bluefin-dx`, `bluefin-dx-nvidia-open` (Bluefin and Bluefin DX; not `bluefin-lts`) | `ublue-os/bluefin` |
 | anything else | none: Report a Problem and Confirm Existing Issue are disabled, with the reason shown |
 
 The repo defaults to the running image's repo for Bluefin, with explicit options in New Issue for ISO / Installer (`tuna-os/bootc-installer`), Compass (`tuna-os/compass`), and Control Center (`projectbluefin/chairlift`). `publish.Submit` accepts only configured report destinations and rejects anything else before any network call. One check, one place.
