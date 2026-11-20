@@ -718,6 +718,30 @@ func TestResumeAfterCrashPostIssue(t *testing.T) {
 	}
 }
 
+// A report resumed after a crash on a repository without Prow must not read labels, look for or
+// post a /kind slash command: those repositories never get Prow labels, so the comment is noise.
+func TestResumeAfterCrashPostIssueNonProw(t *testing.T) {
+	for _, repo := range []string{"ublue-os/bluefin", "tuna-os/bootc-installer", "tuna-os/compass"} {
+		f, dir := newFake(), t.TempDir()
+		d := draft
+		d.Repo, d.Area = repo, "installer"
+		if err := save(dir, &Saved{ReportID: "r1", Stage: IssueCreated, Draft: d,
+			IssueURL: "https://github.com/" + repo + "/issues/7"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Resume(context.Background(), f.exec, dir, "r1"); err != nil {
+			t.Fatal(repo, err)
+		}
+		if f.count("api --method POST") != 0 || f.count("issue view") != 0 || f.count("api user") != 0 || f.count("api --paginate") != 0 ||
+			f.count("issue comment") != 0 || f.count("issue artifact create 7 --body-file - --name systemd-report.json -R "+repo) != 1 {
+			t.Fatal(repo, f.calls)
+		}
+		if p, _ := Pending(dir); len(p) != 0 {
+			t.Fatal(repo, p)
+		}
+	}
+}
+
 func TestArtifactRefusedFallsBackToGist(t *testing.T) {
 	for _, stderr := range []string{"HTTP 403: Resource not accessible by integration", `unknown command "artifact" for "gh issue"`} {
 		f, dir := newFake(), t.TempDir()
