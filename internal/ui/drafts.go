@@ -253,16 +253,14 @@ func (u *ui) restoreCompose(d publish.Draft, id string) {
 	if i := slices.Index(areas, f.Area); i >= 0 {
 		u.area.SetSelected(uint32(i))
 	}
-	if f.Mode == publish.NewIssue {
-		idx := 0
-		for i, p := range projects {
-			if p.repo != "" && p.repo == f.Repo {
-				idx = i
-				break
-			}
+	idx := 0
+	for i, p := range projects {
+		if p.repo != "" && p.repo == f.Repo {
+			idx = i
+			break
 		}
-		u.repo.SetSelected(uint32(idx))
 	}
+	u.repo.SetSelected(uint32(idx))
 	u.shots = f.Shots
 	u.syncShots()
 	u.draftID = id

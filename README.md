@@ -3,7 +3,7 @@
 A GTK4/Libadwaita app that turns a [`systemd-report`](https://www.freedesktop.org/software/systemd/man/latest/systemd-report.html)
 snapshot into a reviewed, privacy-scrubbed GitHub issue. You see exactly what
 leaves the machine before anything is sent; it is published with your own `gh`
-login as an issue in the right repository (defaulting to your Bluefin image, with options for ISO / Installer, Compass, or Control Center), with the full report attached.
+login as an issue in the right repository (defaulting to your Bluefin image, with options for ISO / Installer, Compass, Control Center, and the HPLIP, Gutenprint, Ghostscript, and PS printer apps), with the full report attached.
 
 ## Screenshots
 

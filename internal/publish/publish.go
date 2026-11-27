@@ -109,7 +109,7 @@ var ErrDraftChanged = errors.New("it was not published. Discard it from Drafts a
 var ErrNotSignedIn = errors.New("gh is not signed in; run `gh auth login`")
 
 // Repos are the repositories that accept reports; the first three are Bluefin image repositories.
-var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah", "ublue-os/bluefin", "tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift"}
+var Repos = []string{"projectbluefin/dakota", "projectbluefin/utah", "ublue-os/bluefin", "tuna-os/bootc-installer", "tuna-os/compass", "projectbluefin/chairlift", "projectbluefin/hplip-printer-app", "projectbluefin/gutenprint-printer-app", "projectbluefin/ghostscript-printer-app", "projectbluefin/ps-printer-app"}
 
 // ErrUnfinished means a draft was saved before review, so it must be reopened and reviewed, not resumed.
 var ErrUnfinished = errors.New("this report was saved unfinished. Open it from Drafts to keep writing")

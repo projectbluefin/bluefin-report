@@ -51,6 +51,10 @@ var projects = []struct{ name, repo string }{
 	{"ISO / Installer", "tuna-os/bootc-installer"},
 	{"Compass", "tuna-os/compass"},
 	{"Control Center", "projectbluefin/chairlift"},
+	{"HPLIP Printer App", "projectbluefin/hplip-printer-app"},
+	{"Gutenprint Printer App", "projectbluefin/gutenprint-printer-app"},
+	{"Ghostscript Printer App", "projectbluefin/ghostscript-printer-app"},
+	{"PS Printer App", "projectbluefin/ps-printer-app"},
 }
 
 // Version is set at release build time via -ldflags -X.
