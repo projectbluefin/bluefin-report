@@ -193,10 +193,8 @@ func (u *ui) syncShots() {
 }
 
 func (u *ui) selectedRepo() string {
-	if u.mode == publish.NewIssue {
-		if repo := projects[u.repo.GetSelected()].repo; repo != "" {
-			return repo
-		}
+	if repo := projects[u.repo.GetSelected()].repo; repo != "" {
+		return repo
 	}
 	return u.repoName
 }
@@ -215,11 +213,11 @@ func (u *ui) syncReview() {
 	msg := ""
 	if u.mode != publish.NewIssue {
 		ref := strings.TrimSpace(u.issueRef.GetText())
-		_, err := publish.ParseIssueRef(u.repoName, ref)
+		_, err := publish.ParseIssueRef(repo, ref)
 		ok = err == nil
 		if err != nil && ref != "" {
 			// TRANSLATORS: %s is a GitHub repository, e.g. projectbluefin/dakota.
-			msg = fmt.Sprintf(i18n.G("Enter an issue number or a link to an issue in %s"), u.repoName)
+			msg = fmt.Sprintf(i18n.G("Enter an issue number or a link to an issue in %s"), repo)
 		}
 	}
 	u.refErr.SetText(msg)
@@ -269,7 +267,6 @@ func (u *ui) openCompose(m publish.Mode) {
 	for _, w := range u.newOnly {
 		w.SetVisible(newIssue)
 	}
-	u.repo.SetSensitive(newIssue)
 	u.issueRef.SetVisible(!newIssue)
 	desc, page := i18n.G("What Happened?"), i18n.G("New Issue")
 	switch m {

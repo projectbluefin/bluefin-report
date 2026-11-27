@@ -164,7 +164,7 @@ Regex redaction is best-effort and the UI says so in one line, not a paragraph.
 ## 7. Sharing to GitHub
 
 ### Routing
-Read `IMAGE_ID` from the Basic OS-release metrics. A machine reports only to the repo of the image it runs:
+Read `IMAGE_ID` from the Basic OS-release metrics to determine the default image repository:
 
 | Image | Repo |
 | :--- | :--- |
@@ -173,7 +173,7 @@ Read `IMAGE_ID` from the Basic OS-release metrics. A machine reports only to the
 | `bluefin`, `bluefin-nvidia-open`, `bluefin-dx`, `bluefin-dx-nvidia-open` (Bluefin and Bluefin DX; not `bluefin-lts`) | `ublue-os/bluefin` |
 | anything else | none: Report a Problem and Confirm Existing Issue are disabled, with the reason shown |
 
-The repo defaults to the running image's repo for Bluefin, with explicit options for ISO / Installer (`tuna-os/bootc-installer`), Compass (`tuna-os/compass`), Control Center (`projectbluefin/chairlift`), and the HPLIP, Gutenprint, Ghostscript, and PS printer apps (`projectbluefin/*-printer-app`). `publish.Submit` accepts only configured report destinations and rejects anything else before any network call. One check, one place.
+For new issues, confirmations, and updates, the project defaults to the running image's repo, with explicit options for ISO / Installer (`tuna-os/bootc-installer`), Compass (`tuna-os/compass`), Control Center (`projectbluefin/chairlift`), and the HPLIP, Gutenprint, Ghostscript, and PS printer apps (`projectbluefin/*-printer-app`). `publish.Submit` accepts only configured report destinations and rejects anything else before any network call. One check, one place.
 
 ### Transport
 Use `gh` (Homebrew) rather than a token store of our own. Beta 1 corrections:
