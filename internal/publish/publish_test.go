@@ -481,6 +481,34 @@ func TestConfirm(t *testing.T) {
 	}
 }
 
+func TestPrinterAppDestinations(t *testing.T) {
+	for _, repo := range []string{
+		"projectbluefin/hplip-printer-app",
+		"projectbluefin/gutenprint-printer-app",
+		"projectbluefin/ghostscript-printer-app",
+		"projectbluefin/ps-printer-app",
+	} {
+		for _, mode := range []Mode{NewIssue, Confirm, Update} {
+			t.Run(fmt.Sprintf("%s/%d", repo, mode), func(t *testing.T) {
+				f := newFake()
+				f.out["api issues"] = "me\n"
+				d := Draft{Mode: mode, Repo: repo, Title: "Printer problem", Body: "Details", IssueRef: "3"}
+				_, err := Submit(context.Background(), f.exec, t.TempDir(), d)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mode == NewIssue {
+					if f.count("api --method POST repos/"+repo+"/issues") != 1 {
+						t.Fatal(f.calls)
+					}
+				} else if f.count("issue comment --repo "+repo+" --body-file - -- 3") != 1 {
+					t.Fatal(f.calls)
+				}
+			})
+		}
+	}
+}
+
 func TestConfirmWithReport(t *testing.T) {
 	f, dir := newFake(), t.TempDir()
 	d := Draft{ReportID: "abc", Mode: Confirm, Repo: "projectbluefin/dakota", Body: "Same problem here.", IssueRef: "3", Attachment: []byte("{}")}

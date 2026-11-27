@@ -29,3 +29,22 @@ func TestUserSessionRow(t *testing.T) {
 		})
 	}
 }
+
+func TestPrinterProjectsAvailable(t *testing.T) {
+	for _, repo := range []string{
+		"projectbluefin/hplip-printer-app",
+		"projectbluefin/gutenprint-printer-app",
+		"projectbluefin/ghostscript-printer-app",
+		"projectbluefin/ps-printer-app",
+	} {
+		found := false
+		for _, project := range projects {
+			if project.repo == repo && project.name != "" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("project selector does not offer %s", repo)
+		}
+	}
+}
